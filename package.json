@@ -1,0 +1,34 @@
+{
+  "name": "cookout-2",
+  "version": "1.0.0",
+  "description": "A photographic Doom-like online backyard arena shooter for herm.cool.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "start": "node server/index.js",
+    "preview": "npm run build && npm run start",
+    "test": "node --test",
+    "test:browser": "node qa/smoke.mjs",
+    "test:multiplayer": "node qa/multiplayer-smoke.mjs",
+    "test:performance": "node qa/performance.mjs",
+    "test:load": "node qa/network-load.mjs",
+    "test:portal": "node qa/portal-smoke.mjs",
+    "visual:review": "node qa/visual-review.mjs",
+    "qa:all": "npm test && npm run build && npm run test:multiplayer && npm run test:browser"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "three": "^0.185.1",
+    "ws": "^8.21.1"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.0",
+    "vite": "^6.4.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

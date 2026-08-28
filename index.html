@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Cookout 2 — a live photographic backyard arena shooter on herm.cool."
+    />
+    <meta name="theme-color" content="#181a12" />
+    <meta property="og:title" content="Cookout 2" />
+    <meta
+      property="og:description"
+      content="The burgers are done. The truce is not. Quick-match or open a private patio."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://herm.cool/games/cookout-2/" />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <title>Cookout 2</title>
+  </head>
+  <body>
+    <main id="game-root">
+      <canvas id="world" aria-label="Cookout 2 game world"></canvas>
+      <div id="post-flash" aria-hidden="true"></div>
+      <div id="film-grain" aria-hidden="true"></div>
+      <div id="scanlines" aria-hidden="true"></div>
+      <div id="viewmodel-layer" aria-hidden="true">
+        <div id="viewmodel-sprite"></div>
+      </div>
+
+      <section id="title-screen" class="screen active" aria-labelledby="game-title">
+        <div class="title-rule title-rule-top"></div>
+        <div class="title-copy">
+          <p class="kicker">NEIGHBORHOOD OPS // JULY 04, 1998</p>
+          <h1 id="game-title"><span>COOKOUT</span><span class="title-two">2</span></h1>
+          <p class="title-statement">
+            The burgers are done.<br />
+            The truce is not.
+          </p>
+          <div class="title-actions">
+            <button id="online-button" class="action-button">
+              <span>QUICK MATCH</span>
+              <small>FIND A NEIGHBOR</small>
+            </button>
+            <div class="title-secondary-actions">
+              <button id="private-button" class="text-button">PRIVATE PATIO</button>
+              <button id="start-button" class="text-button">PRACTICE VS. GRILLMASTER</button>
+            </div>
+            <label class="callsign-field">
+              <span>YARD TAG</span>
+              <input id="callsign" type="text" maxlength="18" autocomplete="nickname" spellcheck="false" value="ROOKIE" />
+            </label>
+          </div>
+        </div>
+
+        <div class="title-format" aria-label="Match format">
+          <div><strong>02</strong><span>PLATES<br />TAKE A ROUND</span></div>
+          <div><strong>04</strong><span>ROUNDS<br />RULE THE BLOCK</span></div>
+        </div>
+
+        <div class="title-controls" aria-label="Controls">
+          <p>BACKYARD FIELD GUIDE</p>
+          <dl>
+            <div><dt>WASD</dt><dd>Move</dd></div>
+            <div><dt>Mouse</dt><dd>Aim / fire</dd></div>
+            <div><dt>Right mouse</dt><dd>Aim down sights</dd></div>
+            <div><dt>Shift</dt><dd>Sprint</dd></div>
+            <div><dt>Ctrl</dt><dd>Slide</dd></div>
+            <div><dt>Space</dt><dd>Jump / wall-run</dd></div>
+            <div><dt>R</dt><dd>Reload</dd></div>
+          </dl>
+        </div>
+
+        <p class="title-build">
+          <span id="title-network-state">MATCH SERVICE READY</span><i></i>PHOTOGRAPHIC COMBAT ENGINE
+        </p>
+        <div class="title-rule title-rule-bottom"></div>
+      </section>
+
+      <section id="network-lobby" class="screen" aria-labelledby="lobby-title">
+        <div class="lobby-shell">
+          <header>
+            <p id="lobby-kicker" class="kicker">LIVE BLOCK SERVICE</p>
+            <button id="lobby-close-button" class="lobby-close" aria-label="Close network menu">CLOSE</button>
+          </header>
+          <h2 id="lobby-title">PRIVATE<br />PATIO</h2>
+          <p id="lobby-detail">Open a locked yard or enter a five-character gate code.</p>
+
+          <div id="private-room-controls" class="private-room-controls">
+            <button id="create-room-button" class="action-button">
+              <span>OPEN THE GATE</span><small>HOST</small>
+            </button>
+            <div class="join-room">
+              <label for="room-code-input">GATE CODE</label>
+              <div>
+                <input id="room-code-input" type="text" maxlength="5" autocomplete="off" spellcheck="false" placeholder="-----" />
+                <button id="join-room-button">JOIN</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="queue-state" class="queue-state hidden">
+            <div class="queue-scope" aria-hidden="true"><i></i><i></i><i></i></div>
+            <strong id="queue-code"></strong>
+            <p id="queue-message">Looking across the block for another player.</p>
+            <button id="copy-room-button" class="text-button hidden">COPY INVITE LINK</button>
+          </div>
+
+          <footer>
+            <span><i id="lobby-connection-light"></i><b id="lobby-connection">CONNECTING</b></span>
+            <span id="lobby-latency">-- MS</span>
+          </footer>
+        </div>
+      </section>
+
+      <section id="hud" class="hidden" aria-label="Match status">
+        <header class="match-header">
+          <div class="combatant combatant-player">
+            <span class="combatant-name">YOUR SIDE</span><strong id="player-rounds">0</strong>
+            <span id="player-takes" class="take-marks" aria-label="Your plates"></span>
+          </div>
+          <div class="match-clock">
+            <span id="round-label">ROUND 01</span><strong id="take-timer">00:45</strong>
+            <span id="arena-label">MILLER BACKYARD</span>
+          </div>
+          <div class="combatant combatant-bot">
+            <span id="bot-takes" class="take-marks" aria-label="Opponent plates"></span>
+            <strong id="bot-rounds">0</strong><span id="opponent-name" class="combatant-name">GRILLMASTER</span>
+          </div>
+        </header>
+
+        <div id="network-meter" class="network-meter hidden">
+          <i></i><span id="network-mode">LIVE</span><strong id="network-ping">-- MS</strong>
+        </div>
+
+        <div class="status-panel health-panel">
+          <span class="status-label">HEALTH</span><strong id="health-value">100</strong>
+          <div class="status-track"><i id="health-fill"></i></div>
+        </div>
+        <div class="status-panel ammo-panel">
+          <span id="weapon-name" class="status-label">PATIO CARBINE</span>
+          <strong><span id="ammo-value">30</span><small id="ammo-reserve"> / 90</small></strong>
+          <span id="fire-mode">AUTO / 5.56</span>
+        </div>
+
+        <div id="movement-state">READY</div>
+        <div id="pickup-toast"><span>GEAR</span><strong></strong></div>
+        <div id="crosshair" aria-hidden="true">
+          <i class="crosshair-top"></i><i class="crosshair-right"></i>
+          <i class="crosshair-bottom"></i><i class="crosshair-left"></i><b></b>
+        </div>
+        <div id="hit-marker" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+        <div id="damage-direction" aria-hidden="true"></div>
+      </section>
+
+      <section id="announcement" class="hidden" aria-live="assertive">
+        <p id="announcement-kicker"></p><h2 id="announcement-title"></h2>
+        <div id="announcement-rule"></div><p id="announcement-detail"></p>
+      </section>
+
+      <section id="pause-screen" class="screen" aria-labelledby="pause-title">
+        <div class="pause-box">
+          <p class="kicker">TIMEOUT BY THE COOLER</p><h2 id="pause-title">PAUSED</h2>
+          <button id="resume-button" class="action-button"><span>BACK TO THE YARD</span><small>PRESS ESCAPE</small></button>
+          <button id="restart-button" class="text-button">RESTART PRACTICE</button>
+          <button id="quit-button" class="text-button">LEAVE THE COOKOUT</button>
+          <label class="sensitivity-control">
+            <span>LOOK SENSITIVITY</span>
+            <input id="sensitivity" type="range" min="0.35" max="1.65" step="0.05" value="0.85" />
+          </label>
+          <label class="performance-control">
+            <span>PHOTO RESOLUTION</span>
+            <select id="quality-profile">
+              <option value="auto">AUTO / ADAPTIVE</option>
+              <option value="high">HIGH / SHARP</option>
+              <option value="performance">LOW-RES / CLASSIC</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section id="result-screen" class="screen" aria-labelledby="result-title">
+        <div class="result-copy">
+          <p id="result-kicker" class="kicker">COOKOUT COMPLETE</p>
+          <h2 id="result-title">YARD<br />SECURED</h2>
+          <div class="result-score">
+            <div><span>YOU</span><strong id="result-player-score">4</strong></div><i></i>
+            <div><strong id="result-bot-score">2</strong><span id="result-opponent-name">GRILLMASTER</span></div>
+          </div>
+          <p id="result-detail"></p>
+          <button id="rematch-button" class="action-button"><span>RUN IT BACK</span><small>PRESS ENTER</small></button>
+          <button id="result-quit-button" class="text-button">RETURN TO MENU</button>
+        </div>
+      </section>
+
+      <section id="connection-overlay" class="hidden" aria-live="assertive">
+        <div>
+          <p class="kicker">GATE LINK INTERRUPTED</p><h2>HOLDING<br />YOUR SPOT</h2>
+          <p id="connection-detail">Reconnecting to the authoritative match server.</p>
+          <div class="reconnect-track"><i></i></div>
+        </div>
+      </section>
+
+      <button id="audio-toggle" aria-label="Toggle sound" title="Toggle sound"><span>SOUND</span><i></i></button>
+
+      <section id="desktop-warning">
+        <p class="kicker">KEYBOARD &amp; MOUSE REQUIRED</p><h2>THIS YARD NEEDS<br />A DESKTOP</h2>
+        <p>Cookout 2 is tuned for precise first-person controls.</p>
+      </section>
+      <section id="error-screen" class="screen" aria-live="assertive">
+        <div>
+          <p class="kicker">RENDERER FAILURE</p><h2>THE GRILL<br />DID NOT LIGHT</h2>
+          <p id="error-detail">WebGL 2 is required to run Cookout 2.</p>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
