@@ -1,7 +1,7 @@
 {
-  "name": "cookout-2",
+  "name": "larp",
   "version": "1.0.0",
-  "description": "A photographic Doom-like online backyard arena shooter for herm.cool.",
+  "description": "A photographic Doom-like online LARP arena game for herm.cool.",
   "type": "module",
   "private": true,
   "license": "MIT",
@@ -17,7 +17,7 @@
     "test:load": "node qa/network-load.mjs",
     "test:portal": "node qa/portal-smoke.mjs",
     "visual:review": "node qa/visual-review.mjs",
-    "qa:all": "npm test && npm run build && npm run test:multiplayer && npm run test:browser"
+    "qa:all": "npm test && npm run build && npm run test:browser && npm run test:multiplayer && npm run test:performance && npm run test:load && npm run visual:review"
   },
   "dependencies": {
     "express": "^5.2.1",

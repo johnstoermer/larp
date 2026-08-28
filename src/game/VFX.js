@@ -1,14 +1,17 @@
 import * as THREE from 'three';
 import { clamp } from './math.js';
-import { loadPhotoAtlas, photoAtlasCell } from './photoAtlas.js';
+import { loadPhotoTexture } from './photoTexture.js';
 
 const MAX_PARTICLES = 700;
 const UP = new THREE.Vector3(0, 1, 0);
-const photoFxAtlas = loadPhotoAtlas('./assets/cookout/fx-atlas.png');
-
-function photoFxCell(index) {
-  return photoAtlasCell(photoFxAtlas, index, 4);
-}
+const PHOTO_EFFECTS = Object.freeze({
+  arrow: loadPhotoTexture('/assets/larp/effects/arrow.webp'),
+  bolt: loadPhotoTexture('/assets/larp/effects/bolt.webp'),
+  knife: loadPhotoTexture('/assets/larp/effects/knife.webp'),
+  fireball: loadPhotoTexture('/assets/larp/effects/fireball.webp'),
+  lightning: loadPhotoTexture('/assets/larp/effects/lightning-impact.webp'),
+  dust: loadPhotoTexture('/assets/larp/effects/dust-impact.webp'),
+});
 
 function createParticleMaterial() {
   return new THREE.ShaderMaterial({
@@ -48,8 +51,9 @@ function createParticleMaterial() {
 }
 
 export class VFX {
-  constructor(scene) {
+  constructor(scene, camera) {
     this.scene = scene;
+    this.camera = camera;
     this.root = new THREE.Group();
     this.root.name = 'effects';
     this.scene.add(this.root);
@@ -115,11 +119,12 @@ export class VFX {
     });
   }
 
-  spawnPhotoEffect(cell, position, width, height, life, options = {}) {
+  spawnPhotoEffect(effect, position, width, height, life, options = {}) {
     const material = new THREE.SpriteMaterial({
-      map: photoFxCell(cell),
+      map: PHOTO_EFFECTS[effect] ?? PHOTO_EFFECTS.dust,
       color: options.color ?? 0xffffff,
       transparent: true,
+      alphaTest: 0.025,
       opacity: options.opacity ?? 1,
       depthWrite: false,
       depthTest: true,
@@ -128,7 +133,7 @@ export class VFX {
       blending: options.additive ? THREE.AdditiveBlending : THREE.NormalBlending,
     });
     const sprite = new THREE.Sprite(material);
-    sprite.name = `photographic-effect-${cell}`;
+    sprite.name = `individual-photographic-effect-${effect}`;
     sprite.position.copy(position);
     sprite.scale.set(width, height, 1);
     this.root.add(sprite);
@@ -144,32 +149,43 @@ export class VFX {
         if (options.rise) sprite.position.y += options.rise / 60;
       },
       dispose: () => {
-        material.map.dispose();
         material.dispose();
       },
     });
     return sprite;
   }
 
-  spawnMuzzle(position, direction, color = 0xffb342, power = 1) {
-    this.spawnPhotoEffect(1, position, 0.8 * power, 0.52 * power, 0.065, {
-      additive: true,
-      toneMapped: false,
-      growth: 0.08,
-    });
-
-    const light = new THREE.PointLight(color, 4.5 * power, 7 * power, 2);
-    light.position.copy(position);
-    this.root.add(light);
-    this.transients.push({
-      object: light,
-      age: 0,
-      life: 0.075,
-      update: (amount) => {
-        light.intensity = (1 - amount) * 4.5 * power;
-      },
-    });
-
+  spawnMuzzle(position, direction, color = 0xffb342, power = 1, kind = 'ember') {
+    const effect = kind === 'lightning'
+      ? 'lightning'
+      : kind === 'fireball' || kind === 'ember'
+        ? 'fireball'
+        : kind === 'crossbow'
+          ? 'bolt'
+          : kind === 'shortbow' || kind === 'longbow'
+            ? 'arrow'
+            : kind === 'knives'
+              ? 'knife'
+              : 'dust';
+    const magical = ['lightning', 'fireball', 'ember'].includes(kind);
+    if (magical) {
+      this.spawnPhotoEffect(effect, position, 0.72 * power, 0.72 * power, 0.1, {
+        additive: true,
+        toneMapped: false,
+        growth: 0.12,
+      });
+      const light = new THREE.PointLight(color, 4.5 * power, 7 * power, 2);
+      light.position.copy(position);
+      this.root.add(light);
+      this.transients.push({
+        object: light,
+        age: 0,
+        life: 0.075,
+        update: (amount) => {
+          light.intensity = (1 - amount) * 4.5 * power;
+        },
+      });
+    }
   }
 
   spawnTracer(start, end, color = 0xffcf68, thickness = 0.015, life = 0.075) {
@@ -207,11 +223,80 @@ export class VFX {
     });
   }
 
+  spawnFlyingProp(start, end, kind) {
+    const effect = kind === 'crossbow'
+      ? 'bolt'
+      : kind === 'knives'
+        ? 'knife'
+        : 'arrow';
+    const distance = start.distanceTo(end);
+    const life = clamp(distance / 58, 0.08, 0.34);
+    const material = new THREE.MeshBasicMaterial({
+      map: PHOTO_EFFECTS[effect],
+      transparent: true,
+      alphaTest: 0.04,
+      depthWrite: false,
+      depthTest: true,
+      fog: true,
+      toneMapped: true,
+      side: THREE.DoubleSide,
+    });
+    const size = effect === 'knife' ? [0.62, 0.28] : effect === 'bolt' ? [0.92, 0.22] : [1.28, 0.24];
+    const geometry = new THREE.PlaneGeometry(size[0], size[1]);
+    const projectile = new THREE.Mesh(geometry, material);
+    projectile.name = `flying-${effect}-directional-photo`;
+    projectile.position.copy(start);
+    projectile.renderOrder = 3;
+    this.root.add(projectile);
+    const origin = start.clone();
+    const target = end.clone();
+    const travel = target.clone().sub(origin).normalize();
+    const cameraPosition = new THREE.Vector3();
+    const cameraVector = new THREE.Vector3();
+    const planeNormal = new THREE.Vector3();
+    const planeUp = new THREE.Vector3();
+    const basis = new THREE.Matrix4();
+    const orientAlongFlight = () => {
+      if (this.camera) this.camera.getWorldPosition(cameraPosition);
+      else cameraPosition.copy(projectile.position).add(new THREE.Vector3(0, 1, 0));
+      cameraVector.copy(cameraPosition).sub(projectile.position).normalize();
+      planeNormal.copy(cameraVector).addScaledVector(travel, -cameraVector.dot(travel));
+      if (planeNormal.lengthSq() < 0.00001) {
+        planeNormal.crossVectors(travel, UP);
+        if (planeNormal.lengthSq() < 0.00001) planeNormal.set(0, 0, 1);
+      }
+      planeNormal.normalize();
+      planeUp.crossVectors(planeNormal, travel).normalize();
+      basis.makeBasis(travel, planeUp, planeNormal);
+      projectile.quaternion.setFromRotationMatrix(basis);
+    };
+    orientAlongFlight();
+    this.transients.push({
+      object: projectile,
+      age: 0,
+      life,
+      update: (amount) => {
+        projectile.position.lerpVectors(origin, target, amount);
+        orientAlongFlight();
+        material.opacity = amount > 0.9 ? (1 - amount) * 10 : 1;
+      },
+      dispose: () => {
+        geometry.dispose();
+        material.dispose();
+      },
+    });
+  }
+
   spawnImpact(point, normal, options = {}) {
     const position = point.clone().addScaledVector(normal, 0.035);
     const scale = options.count >= 18 ? 0.78 : options.count >= 8 ? 0.56 : 0.4;
-    this.spawnPhotoEffect(3, position, scale, scale, 0.28, {
-      color: options.color === 0x8feaff ? 0xc8f3ff : 0xffffff,
+    const effect = options.kind === 'lightning'
+      ? 'lightning'
+      : options.kind === 'ember' || options.kind === 'fireball'
+        ? 'fireball'
+        : 'dust';
+    this.spawnPhotoEffect(effect, position, scale, scale, 0.28, {
+      color: options.kind === 'lightning' ? 0xc8f3ff : 0xffffff,
       growth: 0.22,
     });
   }
@@ -219,14 +304,21 @@ export class VFX {
   spawnBloodImpact(point, direction, headshot = false) {
     const position = point.clone().addScaledVector(direction, 0.025);
     const scale = headshot ? 0.7 : 0.48;
-    this.spawnPhotoEffect(3, position, scale, scale, 0.24, {
+    this.spawnPhotoEffect('dust', position, scale, scale, 0.24, {
       color: 0xe8a18d,
       growth: 0.3,
     });
   }
 
-  spawnShell(position, direction, color = 0xc99a43, large = false) {
-    this.spawnPhotoEffect(0, position, large ? 0.14 : 0.1, large ? 0.05 : 0.035, 0.16, {
+  spawnShell(position, direction, color = 0xc99a43, large = false, kind = 'knives') {
+    const effect = kind === 'crossbow'
+      ? 'bolt'
+      : kind === 'shortbow' || kind === 'longbow'
+        ? 'arrow'
+        : kind === 'knives'
+          ? 'knife'
+          : 'dust';
+    this.spawnPhotoEffect(effect, position, large ? 0.2 : 0.14, large ? 0.08 : 0.055, 0.16, {
       color,
       growth: -0.25,
     });
@@ -264,26 +356,26 @@ export class VFX {
 
   spawnDeathBurst(position, facing = new THREE.Vector3(0, 0, 1)) {
     const center = position.clone().add(new THREE.Vector3(0, 0.85, 0));
-    this.spawnPhotoEffect(2, center, 1.45, 1.45, 0.72, {
+    this.spawnPhotoEffect('dust', center, 1.45, 1.45, 0.72, {
       color: 0xd7b3a8,
       opacity: 0.88,
       growth: 0.65,
       rise: 0.55,
     });
-    this.spawnPhotoEffect(3, position.clone().addScaledVector(facing, 0.1), 1.0, 1.0, 0.34, {
+    this.spawnPhotoEffect('dust', position.clone().addScaledVector(facing, 0.1), 1.0, 1.0, 0.34, {
       color: 0xf0c1aa,
       growth: 0.42,
     });
   }
 
   spawnExplosion(position, radius = 5, color = 0xff7435) {
-    this.spawnPhotoEffect(1, position, radius * 1.05, radius * 0.82, 0.42, {
+    this.spawnPhotoEffect('fireball', position, radius * 1.05, radius * 0.95, 0.42, {
       additive: true,
       toneMapped: false,
       opacity: 0.92,
       growth: 0.45,
     });
-    this.spawnPhotoEffect(2, position.clone().add(new THREE.Vector3(0, radius * 0.12, 0)), radius * 0.82, radius * 0.82, 0.86, {
+    this.spawnPhotoEffect('dust', position.clone().add(new THREE.Vector3(0, radius * 0.12, 0)), radius * 0.82, radius * 0.82, 0.86, {
       opacity: 0.84,
       growth: 0.72,
       rise: radius * 0.2,

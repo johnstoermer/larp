@@ -72,10 +72,10 @@ test('reload timing and ammunition transfer stay server authoritative', () => {
   });
   room.phase = 'playing';
   const player = room.players[0];
-  const definition = SERVER_WEAPONS.carbine;
-  player.weapon = 'carbine';
-  player.ammo = 4;
-  player.reserve = 11;
+  const definition = SERVER_WEAPONS.crossbow;
+  player.weapon = 'crossbow';
+  player.ammo = 0;
+  player.reserve = 6;
 
   room.handleReload(first, 1600);
   assert.equal(player.reloadEndsAt, 1600 + definition.reloadMs);
@@ -86,12 +86,12 @@ test('reload timing and ammunition transfer stay server authoritative', () => {
     { shotId: 1, yaw: player.yaw, pitch: player.pitch },
     1700,
   );
-  assert.equal(player.ammo, 4);
+  assert.equal(player.ammo, 0);
   assert.equal(player.lastShotId, 0);
 
   assert.equal(room.finishReload(player, 1600 + definition.reloadMs), true);
   assert.equal(player.ammo, definition.ammo);
-  assert.equal(player.reserve, 1);
+  assert.equal(player.reserve, 5);
   assert.equal(player.reloadEndsAt, Infinity);
   assert.ok(first.messages.some(
     (message) => message.type === 'event' && message.event === 'reload_start',
@@ -216,7 +216,7 @@ test('server-owned hit registration applies damage and ends a take', () => {
   target.position = [5, 0.02, 14];
   shooter.yaw = -Math.PI / 2;
   shooter.pitch = 0;
-  shooter.weapon = 'rail';
+  shooter.weapon = 'crossbow';
   shooter.ammo = 3;
   shooter.history = [{ at: 3000, position: [...shooter.position] }];
   target.history = [{ at: 3000, position: [...target.position] }];
@@ -268,7 +268,7 @@ test('server rejects shot directions that diverge from reported aim', () => {
     3600,
   );
 
-  assert.equal(shooter.ammo, SERVER_WEAPONS.sidearm.ammo);
+  assert.equal(shooter.ammo, SERVER_WEAPONS.knives.ammo);
   assert.equal(shooter.lastShotId, 0);
 });
 
@@ -290,7 +290,7 @@ test('the trade window preserves legitimate simultaneous eliminations', () => {
   secondPlayer.yaw = Math.PI / 2;
   for (const player of room.players) {
     player.pitch = 0;
-    player.weapon = 'rail';
+    player.weapon = 'crossbow';
     player.ammo = 3;
     player.history = [{ at: 4000, position: [...player.position] }];
   }
@@ -324,6 +324,6 @@ test('server collision and ray helpers match arena boundaries', () => {
   assert.ok(Math.abs(direction[0] - 1) < 1e-8);
   const world = firstWorldHit(0, [-10, 1.5, 0], [1, 0, 0], 30);
   assert.equal(world.hit, true);
-  assert.ok(world.distance > 6 && world.distance < 8);
+  assert.ok(world.distance > 7.9 && world.distance < 8.1);
   assert.equal(raySphereDistance([0, 0, 0], [1, 0, 0], [5, 0, 0], 1), 4);
 });

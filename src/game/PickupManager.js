@@ -38,9 +38,8 @@ export class PickupManager {
       modelRoot.position.y = 1.02;
       modelRoot.rotation.set(0.08, Math.PI * 0.25 * index, 0.12);
       const model = createWeaponModel(type);
-      model.rotation.y = Math.PI / 2;
-      const longWeapon = ['carbine', 'burst', 'rail', 'rocket', 'scatter'].includes(type);
-      model.scale.setScalar(longWeapon ? 0.58 : 0.75);
+      const tallWeapon = ['shortbow', 'longbow', 'greatsword', 'lightning'].includes(type);
+      model.scale.setScalar(tallWeapon ? 0.68 : 0.78);
       modelRoot.add(model);
       group.add(modelRoot);
 

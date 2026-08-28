@@ -1,9 +1,9 @@
 import { writeFile } from 'node:fs/promises';
 import WebSocket from 'ws';
 
-const baseUrl = process.env.COOKOUT_URL || 'http://127.0.0.1:8080';
-const clientCount = Number(process.env.COOKOUT_LOAD_CLIENTS || 24);
-const durationMs = Number(process.env.COOKOUT_LOAD_DURATION || 5000);
+const baseUrl = process.env.LARP_URL || 'http://127.0.0.1:8080';
+const clientCount = Number(process.env.LARP_LOAD_CLIENTS || 24);
+const durationMs = Number(process.env.LARP_LOAD_DURATION || 5000);
 const wsUrl = new URL('/ws', baseUrl);
 wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
 
@@ -26,7 +26,7 @@ function createClient(index) {
     socket.send(
       JSON.stringify({
         type: 'hello',
-        version: 2,
+        version: 3,
         name: `LOAD ${String(index).padStart(2, '0')}`,
       }),
     );

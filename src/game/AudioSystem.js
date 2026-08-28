@@ -6,7 +6,7 @@ export class AudioSystem {
     this.master = null;
     this.compressor = null;
     this.ambience = null;
-    this.muted = localStorage.getItem('cookout2-muted') === 'true';
+    this.muted = localStorage.getItem('larp-muted') === 'true';
     this.noiseBuffers = new Map();
   }
 
@@ -32,7 +32,7 @@ export class AudioSystem {
 
   setMuted(muted) {
     this.muted = muted;
-    localStorage.setItem('cookout2-muted', String(muted));
+    localStorage.setItem('larp-muted', String(muted));
     if (this.master && this.context) {
       this.master.gain.cancelScheduledValues(this.context.currentTime);
       this.master.gain.setTargetAtTime(muted ? 0 : 0.76, this.context.currentTime, 0.02);
@@ -144,32 +144,28 @@ export class AudioSystem {
 
   gun(kind, pan = 0, distant = false) {
     const distanceScale = distant ? 0.52 : 1;
-    if (kind === 'pistol') {
-      this.noise({ duration: 0.115, volume: 0.19 * distanceScale, highpass: 430, lowpass: 8200, pan });
-      this.tone({ frequency: 145, endFrequency: 58, duration: 0.12, volume: 0.18 * distanceScale, type: 'sawtooth', pan });
-    } else if (kind === 'smg') {
-      this.noise({ duration: 0.065, volume: 0.135 * distanceScale, highpass: 700, lowpass: 10000, pan });
-      this.tone({ frequency: 185, endFrequency: 72, duration: 0.07, volume: 0.1 * distanceScale, type: 'square', pan });
-    } else if (kind === 'shotgun') {
-      this.noise({ duration: 0.26, volume: 0.32 * distanceScale, highpass: 120, lowpass: 7800, pan });
-      this.tone({ frequency: 92, endFrequency: 31, duration: 0.28, volume: 0.31 * distanceScale, type: 'sawtooth', pan });
-      this.noise({ duration: 0.08, volume: 0.1 * distanceScale, highpass: 2200, pan, delay: 0.06 });
-    } else if (kind === 'carbine') {
-      this.noise({ duration: 0.135, volume: 0.23 * distanceScale, highpass: 300, lowpass: 9800, pan });
-      this.tone({ frequency: 132, endFrequency: 42, duration: 0.14, volume: 0.2 * distanceScale, type: 'square', pan });
-    } else if (kind === 'rifle') {
-      this.noise({ duration: 0.105, volume: 0.19 * distanceScale, highpass: 330, lowpass: 9500, pan });
-      this.tone({ frequency: 125, endFrequency: 46, duration: 0.11, volume: 0.18 * distanceScale, type: 'sawtooth', pan });
-    } else if (kind === 'revolver') {
-      this.noise({ duration: 0.21, volume: 0.28 * distanceScale, highpass: 170, lowpass: 9000, pan });
-      this.tone({ frequency: 108, endFrequency: 34, duration: 0.23, volume: 0.28 * distanceScale, type: 'square', pan });
-    } else if (kind === 'rail') {
-      this.tone({ frequency: 1700, endFrequency: 105, duration: 0.28, volume: 0.19 * distanceScale, type: 'sawtooth', pan });
-      this.tone({ frequency: 83, endFrequency: 35, duration: 0.38, volume: 0.24 * distanceScale, type: 'sine', pan });
-      this.noise({ duration: 0.28, volume: 0.15 * distanceScale, highpass: 1800, lowpass: 12000, pan });
-    } else if (kind === 'rocket') {
-      this.noise({ duration: 0.34, volume: 0.24 * distanceScale, highpass: 80, lowpass: 3800, pan });
-      this.tone({ frequency: 74, endFrequency: 32, duration: 0.33, volume: 0.23 * distanceScale, type: 'sawtooth', pan });
+    if (kind === 'knives') {
+      this.noise({ duration: 0.12, volume: 0.09 * distanceScale, highpass: 650, lowpass: 5200, pan });
+      this.tone({ frequency: 540, endFrequency: 190, duration: 0.09, volume: 0.045 * distanceScale, type: 'sine', pan });
+    } else if (kind === 'shortbow' || kind === 'longbow') {
+      const long = kind === 'longbow';
+      this.tone({ frequency: long ? 145 : 190, endFrequency: long ? 72 : 92, duration: long ? 0.22 : 0.16, volume: (long ? 0.14 : 0.1) * distanceScale, type: 'triangle', pan });
+      this.noise({ duration: 0.09, volume: 0.05 * distanceScale, highpass: 900, lowpass: 4800, pan });
+    } else if (kind === 'ember') {
+      this.noise({ duration: 0.24, volume: 0.14 * distanceScale, highpass: 420, lowpass: 6200, pan });
+      this.tone({ frequency: 260, endFrequency: 78, duration: 0.24, volume: 0.12 * distanceScale, type: 'sawtooth', pan });
+    } else if (kind === 'crossbow') {
+      this.tone({ frequency: 310, endFrequency: 95, duration: 0.12, volume: 0.13 * distanceScale, type: 'square', pan });
+      this.noise({ duration: 0.08, volume: 0.085 * distanceScale, highpass: 750, lowpass: 5200, pan });
+    } else if (kind === 'lightning') {
+      this.tone({ frequency: 1550, endFrequency: 190, duration: 0.18, volume: 0.14 * distanceScale, type: 'sawtooth', pan });
+      this.noise({ duration: 0.18, volume: 0.12 * distanceScale, highpass: 1800, lowpass: 12000, pan });
+    } else if (kind === 'greatsword') {
+      this.noise({ duration: 0.3, volume: 0.17 * distanceScale, highpass: 90, lowpass: 2100, pan });
+      this.tone({ frequency: 130, endFrequency: 48, duration: 0.24, volume: 0.11 * distanceScale, type: 'triangle', pan });
+    } else if (kind === 'fireball') {
+      this.noise({ duration: 0.38, volume: 0.22 * distanceScale, highpass: 70, lowpass: 4200, pan });
+      this.tone({ frequency: 118, endFrequency: 34, duration: 0.36, volume: 0.2 * distanceScale, type: 'sawtooth', pan });
     }
   }
 

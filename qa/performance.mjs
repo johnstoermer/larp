@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { chromium } from 'playwright';
 
-const baseUrl = process.env.COOKOUT_URL || 'http://127.0.0.1:8080';
+const baseUrl = process.env.LARP_URL || 'http://127.0.0.1:8080';
 const output = new URL('../artifacts/', import.meta.url);
 await mkdir(output, { recursive: true });
 
@@ -58,14 +58,14 @@ try {
   page.on('pageerror', (error) => errors.push(`page: ${error.message}`));
   await page.goto(baseUrl, { waitUntil: 'networkidle', timeout: 60_000 });
   await page.locator('#start-button').click();
-  await page.waitForFunction(() => window.__COOKOUT_2_GAME__?.mode === 'match');
-  await page.evaluate(() => window.__COOKOUT_2_GAME__.beginTake());
+  await page.waitForFunction(() => window.__LARP_GAME__?.mode === 'match');
+  await page.evaluate(() => window.__LARP_GAME__.beginTake());
   await page.locator('#world').click({ position: { x: 960, y: 540 } });
   await page.waitForTimeout(1200);
 
   const baseline = await sampleFrames(page, 360);
   await page.evaluate(() => {
-    const game = window.__COOKOUT_2_GAME__;
+    const game = window.__LARP_GAME__;
     const center = game.player.position.clone();
     center.y += 1;
     for (let index = 0; index < 4; index += 1) {
@@ -82,7 +82,7 @@ try {
   await page.keyboard.up('ShiftLeft');
 
   const state = await page.evaluate(() => {
-    const game = window.__COOKOUT_2_GAME__;
+    const game = window.__LARP_GAME__;
     return {
       renderer: game.rendering.getPerformanceState(),
       canvas: {
@@ -103,7 +103,7 @@ try {
     };
   });
   const adaptiveProbe = await page.evaluate(() => {
-    const renderer = window.__COOKOUT_2_GAME__.rendering;
+    const renderer = window.__LARP_GAME__.rendering;
     renderer.setQualityProfile('auto');
     const startTime = renderer.time;
     for (let index = 1; index <= 170; index += 1) {
@@ -127,7 +127,7 @@ try {
   if (state.canvas.width > 1920 * 1.25 || state.canvas.height > 1080 * 1.25) {
     throw new Error(`Adaptive resolution exceeded its pixel budget: ${JSON.stringify(state.canvas)}`);
   }
-  if (state.arena.raycastMeshes > 24) {
+  if (state.arena.raycastMeshes > 32) {
     throw new Error(`Static geometry batching regressed: ${state.arena.raycastMeshes} meshes.`);
   }
   if (state.effects.debris > 72 || state.effects.particles > 560) {

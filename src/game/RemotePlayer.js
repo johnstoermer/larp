@@ -30,7 +30,7 @@ export class RemotePlayer {
     this.controller.root.visible = false;
   }
 
-  reset(position, yaw, weapon = 'sidearm') {
+  reset(position, yaw, weapon = 'knives') {
     POSITION.fromArray(position);
     this.controller.reset(POSITION, yaw, 1);
     this.controller.equip(weapon);

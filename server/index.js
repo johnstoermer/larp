@@ -41,5 +41,5 @@ app.get('*splat', (_request, response) => {
 server.keepAliveTimeout = 65_000;
 server.headersTimeout = 66_000;
 server.listen(port, '0.0.0.0', () => {
-  console.log(`Cookout 2 listening on ${port}`);
+  console.log(`LARP listening on ${port}`);
 });

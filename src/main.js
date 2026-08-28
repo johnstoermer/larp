@@ -7,7 +7,7 @@ const errorDetail = document.getElementById('error-detail');
 
 try {
   if (!canvas || !window.WebGL2RenderingContext) {
-    throw new Error('WebGL 2 is required to run Cookout 2.');
+    throw new Error('WebGL 2 is required to run LARP.');
   }
   const context = canvas.getContext('webgl2', {
     antialias: false,
@@ -21,7 +21,7 @@ try {
   }
   // Three.js creates its own renderer context after this capability check.
   const game = new Game(canvas);
-  Object.defineProperty(window, '__COOKOUT_2_GAME__', {
+  Object.defineProperty(window, '__LARP_GAME__', {
     value: game,
     configurable: false,
     enumerable: false,

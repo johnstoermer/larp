@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { chromium } from 'playwright';
 
-const baseUrl = process.env.COOKOUT_PORTAL_URL || 'https://herm.cool/games/cookout-2';
+const baseUrl = process.env.LARP_PORTAL_URL || 'https://herm.cool/games/larp';
 const output = new URL('../artifacts/', import.meta.url);
 await mkdir(output, { recursive: true });
 
@@ -26,10 +26,10 @@ try {
     waitUntil: 'networkidle',
     timeout: 60_000,
   });
-  const iframe = page.locator('iframe[title="Cookout 2"]');
+  const iframe = page.locator('iframe[title="LARP"]');
   await iframe.waitFor();
   const frame = page.frames().find((candidate) =>
-    candidate.url().startsWith('https://hermcool-cookout-2.fly.dev/'),
+    candidate.url().startsWith('https://hermcool-larp.fly.dev/'),
   );
   if (!frame) throw new Error('The production game iframe did not load.');
   await frame.locator('#title-screen.active').waitFor({ timeout: 60_000 });
@@ -41,7 +41,7 @@ try {
     allow: await iframe.getAttribute('allow'),
     game: await frame.evaluate(() => ({
       title: document.title,
-      webgl: Boolean(window.__COOKOUT_2_GAME__?.rendering?.renderer),
+      webgl: Boolean(window.__LARP_GAME__?.rendering?.renderer),
       quickDuel: Boolean(document.querySelector('#online-button')),
       privateRoom: Boolean(document.querySelector('#private-button')),
       practice: Boolean(document.querySelector('#start-button')),

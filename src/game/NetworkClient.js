@@ -1,4 +1,4 @@
-const PROTOCOL_VERSION = 2;
+const PROTOCOL_VERSION = 3;
 const RECONNECT_DELAYS = [350, 700, 1200, 2000, 3200, 5000];
 
 function websocketUrl() {
@@ -11,10 +11,10 @@ export class NetworkClient extends EventTarget {
     super();
     this.socket = null;
     this.status = 'offline';
-    this.token = localStorage.getItem('cookout2-session') || '';
-    this.name = localStorage.getItem('cookout2-name') || '';
+    this.token = localStorage.getItem('larp-session') || '';
+    this.name = localStorage.getItem('larp-name') || '';
     this.resumeRequested =
-      localStorage.getItem('cookout2-active-match') === '1';
+      localStorage.getItem('larp-active-match') === '1';
     this.rtt = 0;
     this.clockOffset = 0;
     this.reconnectAttempt = 0;
@@ -43,7 +43,7 @@ export class NetworkClient extends EventTarget {
     const cleanName = String(name ?? '').trim().slice(0, 18);
     if (cleanName) {
       this.name = cleanName;
-      localStorage.setItem('cookout2-name', cleanName);
+      localStorage.setItem('larp-name', cleanName);
     }
     this.keepAlive = true;
     this.intentionalClose = false;
@@ -95,8 +95,8 @@ export class NetworkClient extends EventTarget {
     if (message.type === 'welcome') {
       this.token = message.token;
       this.name = message.name;
-      localStorage.setItem('cookout2-session', this.token);
-      localStorage.setItem('cookout2-name', this.name);
+      localStorage.setItem('larp-session', this.token);
+      localStorage.setItem('larp-name', this.name);
       this.reconnectAttempt = 0;
       this.setStatus('online', { online: message.online });
       this.startPing();
@@ -114,11 +114,11 @@ export class NetworkClient extends EventTarget {
     } else if (message.type === 'match_found') {
       this.inMatch = true;
       this.resumeRequested = true;
-      localStorage.setItem('cookout2-active-match', '1');
+      localStorage.setItem('larp-active-match', '1');
     } else if (message.type === 'left_match') {
       this.inMatch = false;
       this.resumeRequested = false;
-      localStorage.removeItem('cookout2-active-match');
+      localStorage.removeItem('larp-active-match');
     }
     this.emit(message.type, message);
     this.emit('message', message);

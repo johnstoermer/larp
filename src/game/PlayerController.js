@@ -8,6 +8,20 @@ const WISH = new THREE.Vector3();
 const SLIDE_DIRECTION = new THREE.Vector3();
 const WALL_TANGENT = new THREE.Vector3();
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
+const BOW_WEAPONS = new Set(['shortbow', 'longbow']);
+const BOW_MIN_DRAW = 0.12;
+const BOW_FULL_DRAW = 0.72;
+
+const VIEWMODEL_MOTION = Object.freeze({
+  knives: { fireX: 120, fireY: -28, fireRotate: -9, reloadRotate: 13 },
+  shortbow: { fireX: -18, fireY: 22, fireRotate: 2, reloadRotate: -7 },
+  ember: { fireX: 10, fireY: -38, fireRotate: -3, reloadRotate: 16 },
+  crossbow: { fireX: -26, fireY: 31, fireRotate: 1.5, reloadRotate: 8 },
+  lightning: { fireX: 18, fireY: -31, fireRotate: 5, reloadRotate: -16 },
+  longbow: { fireX: -12, fireY: 28, fireRotate: -1.5, reloadRotate: -9 },
+  greatsword: { fireX: 155, fireY: -70, fireRotate: -28, reloadRotate: 18 },
+  fireball: { fireX: -22, fireY: -48, fireRotate: 4, reloadRotate: 14 },
+});
 
 export class PlayerController {
   constructor(camera, arena, audio) {
@@ -46,12 +60,14 @@ export class PlayerController {
     this.pressed = new Set();
     this.buttons = new Set();
     this.buttonPressed = new Set();
-    this.sensitivity = Number(localStorage.getItem('cookout2-sensitivity') || 0.85);
-    this.weaponType = 'sidearm';
-    this.ammo = WEAPONS.sidearm.ammo;
-    this.reserve = WEAPONS.sidearm.reserve;
+    this.buttonReleased = new Set();
+    this.sensitivity = Number(localStorage.getItem('larp-sensitivity') || 0.85);
+    this.weaponType = 'knives';
+    this.ammo = WEAPONS.knives.ammo;
+    this.reserve = WEAPONS.knives.reserve;
     this.lastShotAt = -Infinity;
     this.shotFrameTime = 0;
+    this.bowDrawTime = 0;
     this.reloading = false;
     this.reloadRemaining = 0;
     this.reloadDuration = 0;
@@ -61,6 +77,8 @@ export class PlayerController {
 
     this.viewmodelLayer = document.getElementById('viewmodel-layer');
     this.viewmodelSprite = document.getElementById('viewmodel-sprite');
+    this.viewmodelFrameKey = '';
+    this.viewmodelFrames = new Map();
     this.viewRoot = new THREE.Group();
     this.viewRoot.name = 'first-person-view-model';
     let viewVisible = true;
@@ -74,7 +92,8 @@ export class PlayerController {
       },
     });
     this.camera.add(this.viewRoot);
-    this.setWeaponModel('sidearm', false);
+    this.preloadViewmodelFrames();
+    this.setWeaponModel('knives', false);
     this.bindInput();
   }
 
@@ -97,6 +116,7 @@ export class PlayerController {
       this.buttons.add(event.button);
     });
     window.addEventListener('mouseup', (event) => {
+      if (this.buttons.has(event.button)) this.buttonReleased.add(event.button);
       this.buttons.delete(event.button);
     });
     window.addEventListener('mousemove', (event) => {
@@ -114,17 +134,53 @@ export class PlayerController {
       this.buttons.clear();
       this.pressed.clear();
       this.buttonPressed.clear();
+      this.buttonReleased.clear();
+      this.bowDrawTime = 0;
     });
   }
 
+  preloadViewmodelFrames() {
+    if (typeof Image === 'undefined') return;
+    for (const definition of Object.values(WEAPONS)) {
+      const states = ['idle', 'fire', 'reload'];
+      if (BOW_WEAPONS.has(definition.id)) states.push('draw');
+      for (const state of states) {
+        const url = `/assets/larp/viewmodels/${definition.asset}-${state}.webp`;
+        const image = new Image();
+        image.decoding = 'async';
+        image.src = url;
+        this.viewmodelFrames.set(`${definition.id}:${state}`, image);
+      }
+    }
+  }
+
+  setViewmodelFrame(state = 'idle') {
+    if (!this.viewmodelSprite) return;
+    const definition = this.definition ?? WEAPONS.knives;
+    const resolvedState = state === 'draw' && !BOW_WEAPONS.has(definition.id)
+      ? 'idle'
+      : state;
+    const key = `${definition.id}:${resolvedState}`;
+    if (key === this.viewmodelFrameKey) return;
+    this.viewmodelFrameKey = key;
+    this.viewmodelSprite.dataset.state = resolvedState;
+    this.viewmodelSprite.style.backgroundImage =
+      `url('/assets/larp/viewmodels/${definition.asset}-${resolvedState}.webp')`;
+  }
+
   setWeaponModel(type, animate = true) {
-    if (this.viewmodelSprite) this.viewmodelSprite.dataset.weapon = type;
+    const definition = WEAPONS[type] ?? WEAPONS.knives;
+    if (this.viewmodelSprite) {
+      this.viewmodelSprite.dataset.weapon = definition.id;
+      this.viewmodelFrameKey = '';
+      this.setViewmodelFrame('idle');
+    }
     if (animate) this.inspect = 1;
   }
 
   setSensitivity(value) {
     this.sensitivity = Number(value);
-    localStorage.setItem('cookout2-sensitivity', String(this.sensitivity));
+    localStorage.setItem('larp-sensitivity', String(this.sensitivity));
   }
 
   reset(position, yaw) {
@@ -151,24 +207,26 @@ export class PlayerController {
     this.reloading = false;
     this.reloadRemaining = 0;
     this.shotFrameTime = 0;
-    this.equip('sidearm', false);
+    this.bowDrawTime = 0;
+    this.equip('knives', false);
     this.syncCamera(0.016);
   }
 
   equip(type, announce = true) {
-    this.weaponType = type in WEAPONS ? type : 'sidearm';
+    this.weaponType = type in WEAPONS ? type : 'knives';
     this.ammo = WEAPONS[this.weaponType].ammo;
     this.reserve = WEAPONS[this.weaponType].reserve;
     this.reloading = false;
     this.reloadRemaining = 0;
+    this.bowDrawTime = 0;
     this.lastShotAt = -Infinity;
     this.setWeaponModel(this.weaponType, announce);
     if (announce) this.audio.pickup();
   }
 
   discard() {
-    if (this.weaponType === 'sidearm') return false;
-    this.equip('sidearm', true);
+    if (this.weaponType === 'knives') return false;
+    this.equip('knives', true);
     return true;
   }
 
@@ -178,6 +236,9 @@ export class PlayerController {
 
   wantsToFire() {
     if (!this.inputEnabled || this.dead) return false;
+    if (BOW_WEAPONS.has(this.weaponType)) {
+      return this.buttonReleased.has(0) && this.bowDrawTime >= BOW_MIN_DRAW;
+    }
     return this.definition.automatic ? this.buttons.has(0) : this.buttonPressed.has(0);
   }
 
@@ -199,6 +260,7 @@ export class PlayerController {
     this.recoilSide += (Math.random() - 0.5) * definition.recoil * 0.44;
     this.weaponKick = Math.min(2.5, this.weaponKick + definition.recoil);
     this.shotFrameTime = 0.12;
+    this.bowDrawTime = 0;
     this.pitch = clamp(this.pitch + definition.recoil * 0.0062, -1.49, 1.49);
     this.shake = Math.max(this.shake, definition.recoil * 0.075);
     this.shakeTime = 0.11;
@@ -207,6 +269,7 @@ export class PlayerController {
   dryFire(time) {
     if (time - this.lastShotAt < 0.26) return false;
     this.lastShotAt = time;
+    this.bowDrawTime = 0;
     this.weaponKick += 0.08;
     this.audio.empty();
     return true;
@@ -223,6 +286,7 @@ export class PlayerController {
       return false;
     }
     this.reloading = true;
+    this.bowDrawTime = 0;
     this.reloadDuration = definition.reloadMs / 1000;
     this.reloadRemaining = this.reloadDuration;
     this.reloadServerControlled = serverControlled;
@@ -250,6 +314,7 @@ export class PlayerController {
     this.reloading = false;
     this.reloadRemaining = 0;
     this.reloadServerControlled = false;
+    this.bowDrawTime = 0;
     this.audio.tone({
       frequency: 260,
       endFrequency: 420,
@@ -263,6 +328,7 @@ export class PlayerController {
     this.reloading = false;
     this.reloadRemaining = 0;
     this.reloadServerControlled = false;
+    this.bowDrawTime = 0;
   }
 
   getAim(originTarget = new THREE.Vector3(), directionTarget = new THREE.Vector3()) {
@@ -332,6 +398,13 @@ export class PlayerController {
     const wantsJump = this.pressed.has('Space');
     const jumpHeld = this.keys.has('Space');
     this.focused = this.buttons.has(2) && canMove;
+    if (!BOW_WEAPONS.has(this.weaponType) || !canMove || this.dead || this.reloading) {
+      this.bowDrawTime = 0;
+    } else if (this.buttons.has(0)) {
+      this.bowDrawTime = Math.min(BOW_FULL_DRAW, this.bowDrawTime + dt);
+    } else if (!this.buttonReleased.has(0)) {
+      this.bowDrawTime = 0;
+    }
 
     FORWARD.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
     RIGHT.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
@@ -484,8 +557,12 @@ export class PlayerController {
       sprinting: wantsSprint && moveZ > 0 && newHorizontalSpeed > 5,
       speed: newHorizontalSpeed,
     };
+    if (BOW_WEAPONS.has(this.weaponType) && this.buttonReleased.has(0)) {
+      this.bowDrawTime = 0;
+    }
     this.pressed.clear();
     this.buttonPressed.clear();
+    this.buttonReleased.clear();
     this.mouseDelta.set(0, 0);
     return actions;
   }
@@ -546,23 +623,39 @@ export class PlayerController {
       delta,
     );
     if (this.viewmodelSprite) {
-      let frame = 0;
-      let actionAtlas = false;
+      const weaponMotion = VIEWMODEL_MOTION[this.weaponType] ?? VIEWMODEL_MOTION.knives;
+      let actionX = 0;
+      let actionY = 0;
+      let actionRotate = 0;
+      let actionScale = 1;
+      let frame = 'idle';
       if (this.reloading) {
+        frame = 'reload';
         const progress = 1 - this.reloadRemaining / Math.max(0.001, this.reloadDuration);
-        frame = progress < 0.52 ? 2 : 3;
-        actionAtlas = true;
+        const arc = Math.sin(progress * Math.PI);
+        actionX = arc * -34;
+        actionY = arc * 64;
+        actionRotate = arc * weaponMotion.reloadRotate;
       } else if (this.shotFrameTime > 0) {
-        frame = 1;
-        actionAtlas = true;
-      } else if (movement.sprinting) {
-        frame = 3;
-      } else if (movement.moving && this.grounded) {
-        frame = Math.sin(phase) >= 0 ? 1 : 2;
+        frame = 'fire';
+        const attack = clamp(this.shotFrameTime / 0.12, 0, 1);
+        actionX = attack * weaponMotion.fireX;
+        actionY = attack * weaponMotion.fireY;
+        actionRotate = attack * weaponMotion.fireRotate;
+        actionScale = 1 + attack * (this.weaponType === 'fireball' || this.weaponType === 'ember' ? 0.055 : 0.018);
+      } else if (BOW_WEAPONS.has(this.weaponType) && this.bowDrawTime > 0) {
+        frame = 'draw';
+        const draw = clamp(this.bowDrawTime / BOW_FULL_DRAW, 0, 1);
+        actionX = -12 * draw;
+        actionY = 5 * draw;
+        actionScale = 1 + draw * 0.012;
       }
-      this.viewmodelSprite.classList.toggle('action-atlas', actionAtlas);
-      this.viewmodelSprite.style.setProperty('--frame', String(frame));
-      this.viewmodelSprite.style.backgroundPosition = `${frame * 33.333333}% 0`;
+      this.setViewmodelFrame(frame);
+      this.viewmodelSprite.classList.toggle('is-firing', this.shotFrameTime > 0);
+      this.viewmodelSprite.classList.toggle('is-reloading', this.reloading);
+      this.viewmodelSprite.classList.toggle('is-drawing', frame === 'draw');
+      this.viewmodelSprite.classList.toggle('is-sprinting', movement.sprinting);
+      this.viewmodelSprite.classList.toggle('is-moving', movement.moving && this.grounded);
       this.viewmodelSprite.style.setProperty('--vm-x', `${this.sway.x * 240}px`);
       this.viewmodelSprite.style.setProperty(
         '--vm-y',
@@ -572,6 +665,10 @@ export class PlayerController {
         '--vm-rotate',
         `${(this.sway.x * -38 + (movement.sprinting ? -5 : 0)).toFixed(2)}deg`,
       );
+      this.viewmodelSprite.style.setProperty('--vm-action-x', `${actionX.toFixed(2)}px`);
+      this.viewmodelSprite.style.setProperty('--vm-action-y', `${actionY.toFixed(2)}px`);
+      this.viewmodelSprite.style.setProperty('--vm-action-rotate', `${actionRotate.toFixed(2)}deg`);
+      this.viewmodelSprite.style.setProperty('--vm-action-scale', actionScale.toFixed(3));
       this.viewmodelSprite.style.setProperty('--vm-scale', this.focused ? '0.86' : '1');
       this.viewmodelLayer?.classList.toggle('active', this.viewRoot.visible && !this.dead);
     }
@@ -606,7 +703,7 @@ export class PlayerController {
       this.cameraRoll + Math.sin(this.stepCycle * Math.PI * 2) * 0.008 + shakeZ,
     );
     const targetFov = this.focused
-      ? this.weaponType === 'rail'
+      ? this.weaponType === 'longbow' || this.weaponType === 'crossbow'
         ? 48
         : 59
       : this.slideTime > 0 || Math.hypot(this.velocity.x, this.velocity.z) > 7.7

@@ -61,9 +61,9 @@ function createPlayer(session, slot, mapIndex) {
     health: 100,
     dead: false,
     deathAt: Infinity,
-    weapon: 'sidearm',
-    ammo: WEAPONS.sidearm.ammo,
-    reserve: WEAPONS.sidearm.reserve,
+    weapon: 'knives',
+    ammo: WEAPONS.knives.ammo,
+    reserve: WEAPONS.knives.reserve,
     reloadEndsAt: Infinity,
     grounded: false,
     sliding: false,
@@ -207,9 +207,9 @@ export class Room {
       player.health = 100;
       player.dead = false;
       player.deathAt = Infinity;
-      player.weapon = 'sidearm';
-      player.ammo = WEAPONS.sidearm.ammo;
-      player.reserve = WEAPONS.sidearm.reserve;
+      player.weapon = 'knives';
+      player.ammo = WEAPONS.knives.ammo;
+      player.reserve = WEAPONS.knives.reserve;
       player.reloadEndsAt = Infinity;
       player.grounded = false;
       player.sliding = false;
@@ -539,7 +539,7 @@ export class Room {
       traces.push(roundVector(result.point));
       if (!result.target) continue;
       const falloff =
-        shooter.weapon === 'scatter'
+        shooter.weapon === 'ember'
           ? clamp(1.15 - result.distance / 38, 0.32, 1)
           : 1;
       totalDamage +=
@@ -617,10 +617,10 @@ export class Room {
 
   handleDiscard(session) {
     const player = this.playerForSession(session);
-    if (!player || this.phase !== 'playing' || player.weapon === 'sidearm') return;
-    player.weapon = 'sidearm';
-    player.ammo = WEAPONS.sidearm.ammo;
-    player.reserve = WEAPONS.sidearm.reserve;
+    if (!player || this.phase !== 'playing' || player.weapon === 'knives') return;
+    player.weapon = 'knives';
+    player.ammo = WEAPONS.knives.ammo;
+    player.reserve = WEAPONS.knives.reserve;
     player.reloadEndsAt = Infinity;
     player.lastShotAt = -Infinity;
     this.broadcast({

@@ -75,7 +75,7 @@ export class GameRenderer {
     });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.24;
+    this.renderer.toneMappingExposure = 1.06;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.setClearColor(0x121511, 1);
@@ -87,9 +87,9 @@ export class GameRenderer {
 
     this.bloomPass = new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
-      0.42,
-      0.36,
-      0.82,
+      0.16,
+      0.22,
+      0.96,
     );
     this.composer.addPass(this.bloomPass);
 
@@ -100,7 +100,7 @@ export class GameRenderer {
     this.damage = 0;
     this.focus = 0;
     this.time = 0;
-    this.qualityProfile = localStorage.getItem('cookout2-quality') || 'auto';
+    this.qualityProfile = localStorage.getItem('larp-quality') || 'auto';
     if (!['auto', 'high', 'performance'].includes(this.qualityProfile)) {
       this.qualityProfile = 'auto';
     }
@@ -113,7 +113,9 @@ export class GameRenderer {
     this.pixelRatio = 1;
     this.bloomEnabled = this.qualityProfile !== 'performance';
     this.bloomPass.enabled = this.bloomEnabled;
-    this.bloomPass.strength = this.qualityProfile === 'high' ? 0.44 : 0.38;
+    this.bloomPass.strength = this.qualityProfile === 'high' ? 0.18 : 0.13;
+    this.bloomPass.radius = this.qualityProfile === 'high' ? 0.24 : 0.2;
+    this.bloomPass.threshold = this.qualityProfile === 'high' ? 0.94 : 1;
     this.resize();
   }
 
@@ -150,11 +152,13 @@ export class GameRenderer {
     this.qualityProfile = ['auto', 'high', 'performance'].includes(profile)
       ? profile
       : 'auto';
-    localStorage.setItem('cookout2-quality', this.qualityProfile);
+    localStorage.setItem('larp-quality', this.qualityProfile);
     this.renderScale = this.qualityProfile === 'performance' ? 0.78 : 1;
     this.bloomEnabled = this.qualityProfile !== 'performance';
     this.bloomPass.enabled = this.bloomEnabled;
-    this.bloomPass.strength = this.qualityProfile === 'high' ? 0.44 : 0.38;
+    this.bloomPass.strength = this.qualityProfile === 'high' ? 0.18 : 0.13;
+    this.bloomPass.radius = this.qualityProfile === 'high' ? 0.24 : 0.2;
+    this.bloomPass.threshold = this.qualityProfile === 'high' ? 0.94 : 1;
     this.frameTime = 16.7;
     this.fastFrameTime = 0;
     this.slowFrameTime = 0;

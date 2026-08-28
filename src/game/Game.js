@@ -10,7 +10,7 @@ import { PlayerController } from './PlayerController.js';
 import { RemotePlayer } from './RemotePlayer.js';
 import { VFX } from './VFX.js';
 import { clamp, seededRandom, shuffle } from './math.js';
-import { loadPhotoAtlas, photoAtlasCell } from './photoAtlas.js';
+import { loadPhotoTexture } from './photoTexture.js';
 import { getArenaLoadout, WEAPONS } from './weapons.js';
 
 const TEMP_ORIGIN = new THREE.Vector3();
@@ -22,11 +22,7 @@ const TEMP_UP = new THREE.Vector3();
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const TEMP_RAY = new THREE.Ray();
 const TEMP_SPHERE = new THREE.Sphere();
-const fxAtlas = loadPhotoAtlas('./assets/cookout/fx-atlas.png');
-
-function fxCell(index) {
-  return photoAtlasCell(fxAtlas, index, 4);
-}
+const fireballTexture = loadPhotoTexture('/assets/larp/effects/fireball.webp');
 
 function spreadDirection(direction, spread) {
   if (spread <= 0) return direction.clone();
@@ -41,6 +37,29 @@ function spreadDirection(direction, spread) {
     .addScaledVector(TEMP_RIGHT, Math.cos(angle) * radius)
     .addScaledVector(TEMP_UP, Math.sin(angle) * radius)
     .normalize();
+}
+
+function magicColor(definition) {
+  return definition.id === 'lightning' ? 0x8feaff : 0xff8b35;
+}
+
+function magicPower(definition, base = 1) {
+  return base * (definition.id === 'ember' || definition.id === 'lightning' ? 1.35 : 1);
+}
+
+function showWeaponTrail(vfx, muzzle, end, definition, pellet = 0) {
+  if (['knives', 'shortbow', 'longbow', 'crossbow'].includes(definition.id)) {
+    if (pellet === 0) vfx.spawnFlyingProp(muzzle, end, definition.id);
+    return;
+  }
+  if (definition.id === 'greatsword') return;
+  if (definition.id === 'lightning') {
+    vfx.spawnTracer(muzzle, end, 0x8cefff, 0.04, 0.14);
+    return;
+  }
+  if (definition.id === 'ember' && pellet < 4) {
+    vfx.spawnTracer(muzzle, end, 0xff9d5c, pellet === 0 ? 0.014 : 0.006, pellet === 0 ? 0.07 : 0.035);
+  }
 }
 
 function raySphereDistance(origin, direction, center, radius) {
@@ -59,7 +78,7 @@ export class Game {
     this.camera = this.rendering.camera;
     this.audio = new AudioSystem();
     this.arena = new Arena(this.scene, this.rendering.renderer);
-    this.vfx = new VFX(this.scene);
+    this.vfx = new VFX(this.scene, this.camera);
     this.player = new PlayerController(this.camera, this.arena, this.audio);
     this.bot = new BotController(this.scene, this.arena, this.audio);
     this.remote = new RemotePlayer(this.bot);
@@ -82,7 +101,7 @@ export class Game {
     this.pendingRoundWinner = null;
     this.projectiles = [];
     this.matchSeed = Date.now() & 0xfffffff;
-    this.mapOrder = [0, 1, 2];
+    this.mapOrder = [0];
     this.titleTime = 0;
     this.running = true;
     this.lastFrame = performance.now();
@@ -153,7 +172,7 @@ export class Game {
       const name = this.ui.callsign.value.trim().slice(0, 18) || 'ROOKIE';
       this.ui.callsign.value = name;
       this.network.name = name;
-      localStorage.setItem('cookout2-name', name);
+      localStorage.setItem('larp-name', name);
     });
     this.ui.resumeButton.addEventListener('click', () => this.resume());
     this.ui.restartButton.addEventListener('click', () => this.startMatch());
@@ -255,7 +274,7 @@ export class Game {
     this.network.addEventListener('private_created', (event) => {
       this.ui.showQueue({
         title: 'ROOM<br>OPEN',
-        detail: 'The yard is locked. Send the gate code to your opponent.',
+        detail: 'The field is reserved. Send the five-rune code to your opponent.',
         code: event.detail.code,
         copyable: true,
       });
@@ -296,7 +315,7 @@ export class Game {
       detail: 'Reclaiming your held slot on the authoritative match server.',
     });
     if (!(await this.connectOnline())) {
-      localStorage.removeItem('cookout2-active-match');
+      localStorage.removeItem('larp-active-match');
       this.network.resumeRequested = false;
     }
   }
@@ -339,7 +358,7 @@ export class Game {
   async copyInviteLink() {
     const code = this.ui.queueCode.textContent.trim();
     if (!code) return;
-    const invite = `https://herm.cool/games/cookout-2/?room=${encodeURIComponent(code)}`;
+    const invite = `https://herm.cool/games/larp/?room=${encodeURIComponent(code)}`;
     try {
       await navigator.clipboard.writeText(invite);
       this.ui.copyRoomButton.textContent = 'INVITE LINK COPIED';
@@ -380,7 +399,7 @@ export class Game {
     const loadout = getArenaLoadout(9124, 6);
     this.pickups.reset(this.arena.weaponSlots, loadout);
     this.bot.reset(new THREE.Vector3(7.2, 0.02, -4.8), 0.75, 1);
-    this.bot.equip('carbine');
+    this.bot.equip('crossbow');
     this.bot.root.visible = true;
     this.player.viewRoot.visible = false;
     this.player.inputEnabled = false;
@@ -409,9 +428,10 @@ export class Game {
     this.takeNumber = 1;
     this.matchSeed = (Date.now() ^ Math.floor(Math.random() * 0xffffff)) >>> 0;
     const random = seededRandom(this.matchSeed);
-    this.mapOrder = shuffle([0, 1, 2], random);
+    const mapIndices = Array.from({ length: this.arena.getMapCount() }, (_, mapIndex) => mapIndex);
+    this.mapOrder = shuffle(mapIndices, random);
     while (this.mapOrder.length < 7) {
-      this.mapOrder.push(...shuffle([0, 1, 2], random));
+      this.mapOrder.push(...shuffle(mapIndices, random));
     }
     this.ui.showHUD();
     this.player.viewRoot.visible = true;
@@ -461,7 +481,7 @@ export class Game {
       new THREE.Vector3().fromArray(local.position),
       local.yaw,
     );
-    if (local.weapon !== 'sidearm') this.player.equip(local.weapon, false);
+    if (local.weapon !== 'knives') this.player.equip(local.weapon, false);
     this.player.ammo = local.ammo;
     this.player.reserve = local.reserve ?? this.player.definition.reserve;
     if (local.reloading) {
@@ -563,7 +583,7 @@ export class Game {
     this.ui.showAnnouncement(
       `TAKE ${String(this.takeNumber).padStart(2, '0')}`,
       '3',
-      'LAST GRILLMASTER STANDING',
+      'LAST CHAMPION STANDING',
     );
     this.audio.countdown(3);
     this.lastCountdown = 3;
@@ -607,7 +627,7 @@ export class Game {
     this.phase = 'roundEnd';
     this.phaseTimer = 2.75;
     this.ui.showAnnouncement(
-      playerWon ? 'YARD CONTROLLED' : 'YARD LOST',
+      playerWon ? 'REALM CONTROLLED' : 'REALM LOST',
       playerWon ? 'ROUND WON' : 'ROUND LOST',
       `${this.playerRounds} — ${this.botRounds}`,
     );
@@ -653,7 +673,7 @@ export class Game {
       previousPhase !== 'countdown';
     if (respawned) {
       this.player.reset(new THREE.Vector3().fromArray(local.position), local.yaw);
-      if (local.weapon !== 'sidearm') this.player.equip(local.weapon, false);
+      if (local.weapon !== 'knives') this.player.equip(local.weapon, false);
       this.player.ammo = local.ammo;
       this.onlineStateHistory.clear();
       this.clearProjectiles();
@@ -734,7 +754,7 @@ export class Game {
         this.ui.showAnnouncement(
           `TAKE ${String(state.takeNumber).padStart(2, '0')}`,
           String(value),
-          'LAST GRILLMASTER STANDING',
+          'LAST CHAMPION STANDING',
         );
         this.audio.countdown(value);
       }
@@ -767,13 +787,13 @@ export class Game {
     } else if (message.event === 'discard') {
       const local = message.player === this.onlineSlot;
       if (local) {
-        this.player.equip('sidearm', false);
+        this.player.equip('knives', false);
         this.player.ammo = message.ammo;
         this.player.reserve = message.reserve ?? this.player.definition.reserve;
       } else {
-        this.bot.equip('sidearm');
+        this.bot.equip('knives');
         this.bot.ammo = message.ammo;
-        this.bot.reserve = message.reserve ?? WEAPONS.sidearm.reserve;
+        this.bot.reserve = message.reserve ?? WEAPONS.knives.reserve;
       }
     } else if (message.event === 'reload_start') {
       if (message.player === this.onlineSlot) {
@@ -810,7 +830,7 @@ export class Game {
     } else if (message.event === 'round_end') {
       const won = message.winner === this.onlineSlot;
       this.ui.showAnnouncement(
-        won ? 'YARD CONTROLLED' : 'YARD LOST',
+        won ? 'REALM CONTROLLED' : 'REALM LOST',
         won ? 'ROUND WON' : 'ROUND LOST',
         `${message.rounds[this.onlineSlot]} — ${message.rounds[this.onlineSlot === 0 ? 1 : 0]}`,
       );
@@ -818,7 +838,7 @@ export class Game {
     } else if (message.event === 'match_end') {
       this.showOnlineResult(message.winner, message.rounds, message.reason);
     } else if (message.event === 'overtime') {
-      this.ui.showAnnouncement('TIME EXPIRED', 'OVERTIME', 'THE YARD IS BURNING');
+      this.ui.showAnnouncement('TIME EXPIRED', 'OVERTIME', 'THE VILLAGE IS CONTESTED');
       window.setTimeout(() => {
         if (this.matchType === 'online' && this.overtime) this.ui.hideAnnouncement();
       }, 950);
@@ -874,27 +894,29 @@ export class Game {
     this.bot.ammo = message.ammo;
     this.bot.reserve = message.reserve ?? this.bot.reserve;
     this.bot.recoil = Math.min(1.8, this.bot.recoil + definition.recoil);
+    this.bot.attackTime = definition.id === 'greatsword' ? 0.46 : 0.24;
     const direction = new THREE.Vector3().fromArray(message.direction).normalize();
     const muzzle = this.bot.getMuzzlePosition(new THREE.Vector3());
     this.audio.gun(definition.sound, this.getPan(muzzle), true);
     this.vfx.spawnMuzzle(
       muzzle,
       direction,
-      definition.id === 'rail' ? 0x8feaff : 0xff8b35,
-      definition.id === 'scatter' || definition.id === 'rail' ? 1.35 : 0.9,
+      magicColor(definition),
+      magicPower(definition, 0.9),
+      definition.id,
     );
     if (!message.projectile) {
       const traces = message.traces?.slice(
         0,
-        definition.id === 'scatter' ? 5 : 1,
+        definition.id === 'ember' ? 5 : 1,
       ) ?? [];
-      for (const endpoint of traces) {
-        this.vfx.spawnTracer(
+      for (let traceIndex = 0; traceIndex < traces.length; traceIndex += 1) {
+        showWeaponTrail(
+          this.vfx,
           muzzle,
-          new THREE.Vector3().fromArray(endpoint),
-          definition.id === 'rail' ? 0x8cefff : 0xff9d5c,
-          definition.id === 'rail' ? 0.04 : 0.011,
-          definition.id === 'rail' ? 0.14 : 0.065,
+          new THREE.Vector3().fromArray(traces[traceIndex]),
+          definition,
+          traceIndex,
         );
       }
     }
@@ -1002,8 +1024,8 @@ export class Game {
     this.ui.showResult(won, localRounds, remoteRounds, this.onlineOpponent);
     if (reason === 'disconnect' || reason === 'forfeit') {
       this.ui.resultDetail.textContent = won
-        ? 'The neighbor left the yard. The authoritative server awarded the match.'
-        : 'The match ended when your backyard link was surrendered.';
+        ? 'The rival left the field. The authoritative server awarded the match.'
+        : 'The match ended when your arena link was surrendered.';
     }
   }
 
@@ -1092,7 +1114,7 @@ export class Game {
         this.ui.showAnnouncement(
           `TAKE ${String(this.takeNumber).padStart(2, '0')}`,
           String(value),
-          'LAST GRILLMASTER STANDING',
+          'LAST CHAMPION STANDING',
         );
         this.audio.countdown(value);
       }
@@ -1132,7 +1154,7 @@ export class Game {
     if (this.takeTime <= 0 && !this.overtime) {
       this.overtime = true;
       this.overtimeTick = 0;
-      this.ui.showAnnouncement('TIME EXPIRED', 'OVERTIME', 'THE YARD IS BURNING');
+      this.ui.showAnnouncement('TIME EXPIRED', 'OVERTIME', 'THE VILLAGE IS CONTESTED');
       window.setTimeout(() => {
         if (this.phase === 'playing' && this.overtime) this.ui.hideAnnouncement();
       }, 950);
@@ -1215,8 +1237,9 @@ export class Game {
     this.vfx.spawnMuzzle(
       muzzle,
       direction,
-      definition.id === 'rail' ? 0x8feaff : 0xffb23d,
-      definition.id === 'scatter' || definition.id === 'rail' ? 1.45 : 1,
+      magicColor(definition),
+      magicPower(definition, 1),
+      definition.id,
     );
 
     if (definition.projectile) {
@@ -1235,7 +1258,7 @@ export class Game {
         const end = result.point;
         if (result.kind === 'bot') {
           const falloff =
-            definition.id === 'scatter'
+            definition.id === 'ember'
               ? clamp(1.15 - result.distance / 38, 0.32, 1)
               : 1;
           const damage =
@@ -1253,40 +1276,18 @@ export class Game {
           this.audio.impact(true, result.headshot);
         } else if (result.kind === 'world') {
           this.vfx.spawnImpact(end, result.normal, {
-            count: definition.id === 'rail' ? 24 : definition.id === 'scatter' ? 5 : 10,
-            color: definition.id === 'rail' ? 0x8feaff : 0xffb043,
+            count: definition.id === 'lightning' ? 24 : definition.id === 'ember' ? 5 : 10,
+            color: definition.id === 'lightning' ? 0x8feaff : 0xffb043,
+            kind: definition.id,
           });
           if (pellet === 0 || definition.pellets === 1) this.audio.impact(false);
         }
-        if (pellet === 0 || definition.id === 'rail') {
-          this.vfx.spawnTracer(
-            muzzle,
-            end,
-            definition.id === 'rail' ? 0x8cefff : 0xffd277,
-            definition.id === 'rail' ? 0.045 : 0.012,
-            definition.id === 'rail' ? 0.15 : 0.065,
-          );
-        } else if (definition.id === 'scatter' && pellet < 5) {
-          this.vfx.spawnTracer(muzzle, end, 0xffc56b, 0.006, 0.035);
-        }
+        showWeaponTrail(this.vfx, muzzle, end, definition, pellet);
       }
       if (anyHit) this.ui.showHit(headshot, this.elapsed);
     }
 
-    if (definition.id !== 'rocket' && definition.id !== 'rail') {
-      const casing = this.player.getCasingPosition(new THREE.Vector3());
-      const eject = this.player
-        .getRightDirection(new THREE.Vector3())
-        .multiplyScalar(1.4)
-        .add(new THREE.Vector3(0, 0.25, 0));
-      this.vfx.spawnShell(
-        casing,
-        eject,
-        definition.casing,
-        definition.id === 'scatter' || definition.id === 'revolver',
-      );
-    }
-    if (definition.id === 'rail' || definition.id === 'scatter') this.ui.flash();
+    if (definition.id === 'lightning' || definition.id === 'ember' || definition.id === 'greatsword') this.ui.flash();
   }
 
   fireOnlineWeapon() {
@@ -1304,8 +1305,9 @@ export class Game {
     this.vfx.spawnMuzzle(
       muzzle,
       direction,
-      definition.id === 'rail' ? 0x8feaff : 0xffb23d,
-      definition.id === 'scatter' || definition.id === 'rail' ? 1.45 : 1,
+      magicColor(definition),
+      magicPower(definition, 1),
+      definition.id,
     );
 
     if (!definition.projectile) {
@@ -1319,22 +1321,13 @@ export class Game {
         const result = this.traceAgainstBot(origin, shotDirection, definition.range);
         if (result.kind === 'world') {
           this.vfx.spawnImpact(result.point, result.normal, {
-            count: definition.id === 'rail' ? 18 : definition.id === 'scatter' ? 3 : 7,
-            color: definition.id === 'rail' ? 0x8feaff : 0xffb043,
+            count: definition.id === 'lightning' ? 18 : definition.id === 'ember' ? 3 : 7,
+            color: definition.id === 'lightning' ? 0x8feaff : 0xffb043,
+            kind: definition.id,
             debris: pellet === 0,
           });
         }
-        if (pellet === 0 || definition.id === 'rail') {
-          this.vfx.spawnTracer(
-            muzzle,
-            result.point,
-            definition.id === 'rail' ? 0x8cefff : 0xffd277,
-            definition.id === 'rail' ? 0.045 : 0.012,
-            definition.id === 'rail' ? 0.15 : 0.065,
-          );
-        } else if (definition.id === 'scatter' && pellet < 5) {
-          this.vfx.spawnTracer(muzzle, result.point, 0xffc56b, 0.006, 0.035);
-        }
+        showWeaponTrail(this.vfx, muzzle, result.point, definition, pellet);
       }
     }
 
@@ -1347,20 +1340,7 @@ export class Game {
       pitch: this.player.pitch,
     });
 
-    if (definition.id !== 'rocket' && definition.id !== 'rail') {
-      const casing = this.player.getCasingPosition(new THREE.Vector3());
-      const eject = this.player
-        .getRightDirection(new THREE.Vector3())
-        .multiplyScalar(1.4)
-        .add(new THREE.Vector3(0, 0.25, 0));
-      this.vfx.spawnShell(
-        casing,
-        eject,
-        definition.casing,
-        definition.id === 'scatter' || definition.id === 'revolver',
-      );
-    }
-    if (definition.id === 'rail' || definition.id === 'scatter') this.ui.flash();
+    if (definition.id === 'lightning' || definition.id === 'ember' || definition.id === 'greatsword') this.ui.flash();
   }
 
   fireBotWeapon() {
@@ -1374,8 +1354,9 @@ export class Game {
     this.vfx.spawnMuzzle(
       muzzle,
       baseDirection,
-      definition.id === 'rail' ? 0x8feaff : 0xff8b35,
-      definition.id === 'scatter' || definition.id === 'rail' ? 1.35 : 0.9,
+      magicColor(definition),
+      magicPower(definition, 0.9),
+      definition.id,
     );
     if (definition.projectile) {
       this.spawnProjectile('bot', muzzle, baseDirection, definition);
@@ -1385,13 +1366,13 @@ export class Game {
     for (let pellet = 0; pellet < definition.pellets; pellet += 1) {
       const botSpread =
         definition.spread *
-        (definition.id === 'scatter' ? 0.9 : 0.72) *
+        (definition.id === 'ember' ? 0.9 : 0.72) *
         (1.14 - this.bot.difficulty * 0.12);
       const direction = spreadDirection(baseDirection, botSpread);
       const result = this.traceAgainstPlayer(origin, direction, definition.range);
       if (result.kind === 'player') {
         const falloff =
-          definition.id === 'scatter'
+          definition.id === 'ember'
             ? clamp(1.12 - result.distance / 34, 0.3, 1)
             : 1;
         const damage =
@@ -1402,22 +1383,13 @@ export class Game {
         this.damagePlayer(damage, this.bot.position, result.headshot);
       } else if (result.kind === 'world') {
         this.vfx.spawnImpact(result.point, result.normal, {
-          count: definition.id === 'scatter' ? 4 : 8,
-          color: definition.id === 'rail' ? 0x8feaff : 0xff9b43,
+          count: definition.id === 'ember' ? 4 : 8,
+          color: definition.id === 'lightning' ? 0x8feaff : 0xff9b43,
+          kind: definition.id,
           debris: pellet === 0,
         });
       }
-      if (pellet === 0 || definition.id === 'rail') {
-        this.vfx.spawnTracer(
-          muzzle,
-          result.point,
-          definition.id === 'rail' ? 0x8cefff : 0xff9d5c,
-          definition.id === 'rail' ? 0.04 : 0.011,
-          definition.id === 'rail' ? 0.14 : 0.065,
-        );
-      } else if (definition.id === 'scatter' && pellet < 5) {
-        this.vfx.spawnTracer(muzzle, result.point, 0xff9d5c, 0.006, 0.03);
-      }
+      showWeaponTrail(this.vfx, muzzle, result.point, definition, pellet);
     }
   }
 
@@ -1535,7 +1507,7 @@ export class Game {
   spawnProjectile(owner, position, direction, definition, options = {}) {
     const group = new THREE.Group();
     const bodyMaterial = new THREE.SpriteMaterial({
-      map: fxCell(0),
+      map: fireballTexture,
       color: owner === 'player' ? 0xffffff : 0xffd6ca,
       transparent: true,
       alphaTest: 0.04,
@@ -1544,8 +1516,8 @@ export class Game {
       toneMapped: true,
     });
     const body = new THREE.Sprite(bodyMaterial);
-    body.name = 'photographic-projectile-sprite';
-    body.scale.set(0.92, 0.31, 1);
+    body.name = 'individual-photographic-fireball-projectile';
+    body.scale.set(0.92, 0.92, 1);
     group.add(body);
     const light = new THREE.PointLight(
       owner === 'player' ? 0xff9e3d : 0xff5336,

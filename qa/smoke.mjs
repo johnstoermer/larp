@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { chromium } from 'playwright';
 
-const baseUrl = process.env.COOKOUT_URL || 'http://127.0.0.1:8080';
+const baseUrl = process.env.LARP_URL || 'http://127.0.0.1:8080';
 const output = new URL('../artifacts/', import.meta.url);
 await mkdir(output, { recursive: true });
 
@@ -42,18 +42,18 @@ if (!titleState.webgl || titleState.errorVisible) {
 }
 
 await page.locator('#start-button').click();
-await page.waitForFunction(() => window.__COOKOUT_2_GAME__?.mode === 'match');
-await page.evaluate(() => window.__COOKOUT_2_GAME__.beginTake());
-await page.waitForFunction(() => window.__COOKOUT_2_GAME__?.phase === 'playing');
+await page.waitForFunction(() => window.__LARP_GAME__?.mode === 'match');
+await page.evaluate(() => window.__LARP_GAME__.beginTake());
+await page.waitForFunction(() => window.__LARP_GAME__?.phase === 'playing');
 await page.locator('#hud:not(.hidden)').waitFor();
 await page.locator('#world').click({ position: { x: 760, y: 430 } });
 await page.waitForTimeout(350);
 await page.evaluate(() => {
-  window.__COOKOUT_2_GAME__.player.lastShotAt = -Infinity;
+  window.__LARP_GAME__.player.lastShotAt = -Infinity;
 });
 
 const before = await page.evaluate(() => {
-  const game = window.__COOKOUT_2_GAME__;
+  const game = window.__LARP_GAME__;
   return {
     ammo: game.player.ammo,
     position: game.player.position.toArray(),
@@ -69,7 +69,7 @@ await page.keyboard.up('KeyW');
 await page.keyboard.up('ShiftLeft');
 await page.waitForTimeout(250);
 const after = await page.evaluate(() => {
-  const game = window.__COOKOUT_2_GAME__;
+  const game = window.__LARP_GAME__;
   return {
     ammo: game.player.ammo,
     position: game.player.position.toArray(),
@@ -82,13 +82,68 @@ const after = await page.evaluate(() => {
   };
 });
 
+await page.evaluate(() => {
+  const game = window.__LARP_GAME__;
+  game.resetCombatants();
+  game.beginTake();
+  const player = game.player;
+  player.equip('shortbow', false);
+  player.lastShotAt = -Infinity;
+});
+const bowAmmoBefore = await page.evaluate(() => window.__LARP_GAME__.player.ammo);
+await page.mouse.down();
+await page.waitForFunction(
+  () =>
+    window.__LARP_GAME__.player.bowDrawTime >= 0.16 &&
+    window.__LARP_GAME__.player.viewmodelSprite?.dataset.state === 'draw',
+  null,
+  { timeout: 3000 },
+);
+const bowHeld = await page.evaluate(() => ({
+  ammo: window.__LARP_GAME__.player.ammo,
+  drawTime: window.__LARP_GAME__.player.bowDrawTime,
+  frame: window.__LARP_GAME__.player.viewmodelSprite?.dataset.state,
+}));
+await page.mouse.up();
+await page.waitForFunction(
+  (before) => window.__LARP_GAME__.player.ammo < before,
+  bowAmmoBefore,
+  { timeout: 3000 },
+);
+await page.waitForFunction(
+  () => window.__LARP_GAME__.player.viewmodelSprite?.dataset.state === 'fire',
+  null,
+  { timeout: 3000 },
+);
+const bowReleased = await page.evaluate(() => ({
+  ammo: window.__LARP_GAME__.player.ammo,
+  frame: window.__LARP_GAME__.player.viewmodelSprite?.dataset.state,
+}));
+await page.evaluate(() => {
+  const player = window.__LARP_GAME__.player;
+  player.ammo = Math.max(0, player.definition.ammo - 2);
+  player.reserve = Math.max(1, player.reserve);
+});
+await page.keyboard.press('KeyR');
+await page.waitForFunction(
+  () =>
+    window.__LARP_GAME__.player.reloading &&
+    window.__LARP_GAME__.player.viewmodelSprite?.dataset.state === 'reload',
+  null,
+  { timeout: 3000 },
+);
+const bowReload = await page.evaluate(() => ({
+  reloading: window.__LARP_GAME__.player.reloading,
+  frame: window.__LARP_GAME__.player.viewmodelSprite?.dataset.state,
+}));
+
 await page.screenshot({
   path: new URL('gameplay.png', output).pathname.slice(1),
   fullPage: true,
 });
 
 const mechanics = await page.evaluate(() => {
-  const game = window.__COOKOUT_2_GAME__;
+  const game = window.__LARP_GAME__;
   const player = game.player;
   player.reset(game.arena.getSpawn('player'), game.arena.getSpawnYaw('player'));
   player.grounded = true;
@@ -111,6 +166,22 @@ const mechanics = await page.evaluate(() => {
 });
 
 if (after.ammo >= before.ammo) throw new Error('Firing did not consume ammunition.');
+if (
+  bowHeld.ammo !== bowAmmoBefore ||
+  bowHeld.drawTime < 0.12 ||
+  bowHeld.frame !== 'draw' ||
+  bowReleased.ammo !== bowAmmoBefore - 1 ||
+  bowReleased.frame !== 'fire' ||
+  !bowReload.reloading ||
+  bowReload.frame !== 'reload'
+) {
+  throw new Error(`Bow hold/release/reload animation failed: ${JSON.stringify({
+    bowAmmoBefore,
+    bowHeld,
+    bowReleased,
+    bowReload,
+  })}`);
+}
 if (
   after.renderCalls < 1 ||
   after.arenaMeshes < 10 ||
@@ -139,6 +210,7 @@ const report = {
   before,
   after,
   mechanics,
+  bow: { bowAmmoBefore, held: bowHeld, released: bowReleased, reload: bowReload },
   movementDistance,
   pageErrors,
   consoleErrors,

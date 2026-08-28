@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { chromium } from 'playwright';
 
-const baseUrl = process.env.COOKOUT_URL || 'http://127.0.0.1:8080';
+const baseUrl = process.env.LARP_URL || 'http://127.0.0.1:8080';
 const output = new URL('../artifacts/', import.meta.url);
 await mkdir(output, { recursive: true });
 
@@ -53,8 +53,8 @@ try {
     [alpha.page, bravo.page].map((page) =>
       page.waitForFunction(
         () =>
-          window.__COOKOUT_2_GAME__?.matchType === 'online' &&
-          window.__COOKOUT_2_GAME__?.onlineRoomId,
+          window.__LARP_GAME__?.matchType === 'online' &&
+          window.__LARP_GAME__?.onlineRoomId,
         null,
         { timeout: 30_000 },
       ),
@@ -63,7 +63,7 @@ try {
   await Promise.all(
     [alpha.page, bravo.page].map((page) =>
       page.waitForFunction(
-        () => window.__COOKOUT_2_GAME__?.phase === 'playing',
+        () => window.__LARP_GAME__?.phase === 'playing',
         null,
         { timeout: 30_000 },
       ),
@@ -73,7 +73,7 @@ try {
   const matched = await Promise.all(
     [alpha.page, bravo.page].map((page) =>
       page.evaluate(() => {
-        const game = window.__COOKOUT_2_GAME__;
+        const game = window.__LARP_GAME__;
         return {
           roomId: game.onlineRoomId,
           slot: game.onlineSlot,
@@ -99,7 +99,7 @@ try {
   await alpha.page.locator('#world').click({ position: { x: 640, y: 380 } });
   await alpha.page.waitForTimeout(250);
   const beforeMovement = await alpha.page.evaluate(() =>
-    window.__COOKOUT_2_GAME__.player.position.toArray(),
+    window.__LARP_GAME__.player.position.toArray(),
   );
   await alpha.page.keyboard.down('ShiftLeft');
   await alpha.page.keyboard.down('KeyW');
@@ -108,7 +108,7 @@ try {
   await alpha.page.keyboard.up('ShiftLeft');
   await alpha.page.waitForTimeout(500);
   const afterMovement = await alpha.page.evaluate(() =>
-    window.__COOKOUT_2_GAME__.player.position.toArray(),
+    window.__LARP_GAME__.player.position.toArray(),
   );
   const movementDistance = Math.hypot(
     afterMovement[0] - beforeMovement[0],
@@ -116,7 +116,7 @@ try {
   );
   if (movementDistance < 0.2) {
     const movementState = await alpha.page.evaluate(() => {
-      const game = window.__COOKOUT_2_GAME__;
+      const game = window.__LARP_GAME__;
       return {
         phase: game.phase,
         onlinePaused: game.onlinePaused,
@@ -143,34 +143,43 @@ try {
   }
 
   await alpha.page.evaluate(() => {
-    window.__COOKOUT_2_GAME__.player.lastShotAt = -Infinity;
+    window.__LARP_GAME__.player.lastShotAt = -Infinity;
   });
-  const ammoBefore = await alpha.page.evaluate(
-    () => window.__COOKOUT_2_GAME__.player.ammo,
-  );
+  const shotBefore = await alpha.page.evaluate(() => ({
+    ammo: window.__LARP_GAME__.player.ammo,
+    weapon: window.__LARP_GAME__.player.weaponType,
+  }));
   await alpha.page.mouse.down();
-  await alpha.page.waitForTimeout(120);
+  if (shotBefore.weapon === 'shortbow' || shotBefore.weapon === 'longbow') {
+    await alpha.page.waitForFunction(
+      () => window.__LARP_GAME__.player.bowDrawTime >= 0.16,
+      null,
+      { timeout: 3000 },
+    );
+  } else {
+    await alpha.page.waitForTimeout(120);
+  }
   await alpha.page.mouse.up();
   await alpha.page.waitForFunction(
-    (before) => window.__COOKOUT_2_GAME__.player.ammo < before,
-    ammoBefore,
+    (before) => window.__LARP_GAME__.player.ammo < before,
+    shotBefore.ammo,
   );
   await bravo.page.waitForFunction(
-    (before) => window.__COOKOUT_2_GAME__.bot.ammo < before,
-    ammoBefore,
+    (before) => window.__LARP_GAME__.bot.ammo < before,
+    shotBefore.ammo,
     { timeout: 5000 },
   );
   const weaponSync = await Promise.all(
     [alpha.page, bravo.page].map((page) =>
       page.evaluate(() => ({
-        localAmmo: window.__COOKOUT_2_GAME__.player.ammo,
-        remoteAmmo: window.__COOKOUT_2_GAME__.bot.ammo,
+        localAmmo: window.__LARP_GAME__.player.ammo,
+        remoteAmmo: window.__LARP_GAME__.bot.ammo,
       })),
     ),
   );
 
   const remoteObservedPosition = await bravo.page.evaluate(() =>
-    window.__COOKOUT_2_GAME__.bot.position.toArray(),
+    window.__LARP_GAME__.bot.position.toArray(),
   );
   const remoteMovementError = Math.hypot(
     remoteObservedPosition[0] - afterMovement[0],
@@ -183,8 +192,8 @@ try {
   await bravo.page.reload({ waitUntil: 'networkidle', timeout: 60_000 });
   await bravo.page.waitForFunction(
     () =>
-      window.__COOKOUT_2_GAME__?.matchType === 'online' &&
-      window.__COOKOUT_2_GAME__?.onlineRoomId,
+      window.__LARP_GAME__?.matchType === 'online' &&
+      window.__LARP_GAME__?.onlineRoomId,
     null,
     { timeout: 20_000 },
   );
@@ -192,18 +201,18 @@ try {
     [alpha.page, bravo.page].map((page) =>
       page.waitForFunction(
         () =>
-          window.__COOKOUT_2_GAME__?.network.status === 'online' &&
-          window.__COOKOUT_2_GAME__?.phase !== 'reconnecting',
+          window.__LARP_GAME__?.network.status === 'online' &&
+          window.__LARP_GAME__?.phase !== 'reconnecting',
         null,
         { timeout: 20_000 },
       ),
     ),
   );
   const resumed = await bravo.page.evaluate(() => ({
-    roomId: window.__COOKOUT_2_GAME__.onlineRoomId,
-    slot: window.__COOKOUT_2_GAME__.onlineSlot,
-    phase: window.__COOKOUT_2_GAME__.phase,
-    activeSession: localStorage.getItem('cookout2-active-match'),
+    roomId: window.__LARP_GAME__.onlineRoomId,
+    slot: window.__LARP_GAME__.onlineSlot,
+    phase: window.__LARP_GAME__.phase,
+    activeSession: localStorage.getItem('larp-active-match'),
   }));
   if (resumed.roomId !== matched[1].roomId || resumed.slot !== matched[1].slot) {
     throw new Error(`Reconnect did not restore the held slot: ${JSON.stringify(resumed)}`);
@@ -211,15 +220,15 @@ try {
 
   await Promise.all(
     [alpha.page, bravo.page].map((page) =>
-      page.evaluate(() => window.__COOKOUT_2_GAME__.returnToTitle()),
+      page.evaluate(() => window.__LARP_GAME__.returnToTitle()),
     ),
   );
   await Promise.all(
     [alpha.page, bravo.page].map((page) =>
       page.waitForFunction(
         () =>
-          window.__COOKOUT_2_GAME__?.mode === 'title' &&
-          !window.__COOKOUT_2_GAME__?.network.inMatch,
+          window.__LARP_GAME__?.mode === 'title' &&
+          !window.__LARP_GAME__?.network.inMatch,
       ),
     ),
   );
@@ -236,9 +245,9 @@ try {
     [alpha.page, bravo.page].map((page) =>
       page.waitForFunction(
         (previousRoom) =>
-          window.__COOKOUT_2_GAME__?.matchType === 'online' &&
-          window.__COOKOUT_2_GAME__?.onlineRoomId &&
-          window.__COOKOUT_2_GAME__.onlineRoomId !== previousRoom,
+          window.__LARP_GAME__?.matchType === 'online' &&
+          window.__LARP_GAME__?.onlineRoomId &&
+          window.__LARP_GAME__.onlineRoomId !== previousRoom,
         matched[0].roomId,
         { timeout: 20_000 },
       ),
@@ -247,9 +256,9 @@ try {
   const privateMatch = await Promise.all(
     [alpha.page, bravo.page].map((page) =>
       page.evaluate(() => ({
-        roomId: window.__COOKOUT_2_GAME__.onlineRoomId,
-        privateMatch: window.__COOKOUT_2_GAME__.onlinePrivateMatch,
-        opponent: window.__COOKOUT_2_GAME__.onlineOpponent,
+        roomId: window.__LARP_GAME__.onlineRoomId,
+        privateMatch: window.__LARP_GAME__.onlinePrivateMatch,
+        opponent: window.__LARP_GAME__.onlineOpponent,
       })),
     ),
   );
@@ -294,7 +303,7 @@ try {
 
   await Promise.all(
     [alpha.page, bravo.page].map((page) =>
-      page.evaluate(() => window.__COOKOUT_2_GAME__.returnToTitle()),
+      page.evaluate(() => window.__LARP_GAME__.returnToTitle()),
     ),
   );
   await Promise.all([alpha.context.close(), bravo.context.close()]);

@@ -1,12 +1,34 @@
 import * as THREE from 'three';
 import { clamp, damp, moveToward } from './math.js';
-import { loadPhotoAtlas, photoAtlasCell } from './photoAtlas.js';
+import { loadPhotoTexture } from './photoTexture.js';
 import { WEAPONS } from './weapons.js';
 
 const TEMP_A = new THREE.Vector3();
 const TEMP_B = new THREE.Vector3();
 const TEMP_C = new THREE.Vector3();
-const characterAtlas = loadPhotoAtlas('./assets/cookout/grillmaster-frames.png');
+const fighterTextures = new Map();
+
+function fighterTexture(type) {
+  const definition = WEAPONS[type] ?? WEAPONS.knives;
+  if (!fighterTextures.has(definition.id)) {
+    fighterTextures.set(
+      definition.id,
+      loadPhotoTexture(`/assets/larp/fighters/${definition.asset}.webp`),
+    );
+  }
+  return fighterTextures.get(definition.id);
+}
+
+const ATTACK_MOTION = Object.freeze({
+  knives: { duration: 0.18, rotate: -0.07, x: 0.12, y: 0.01, scale: 0.04 },
+  shortbow: { duration: 0.28, rotate: 0.025, x: -0.02, y: -0.025, scale: 0.025 },
+  ember: { duration: 0.32, rotate: -0.035, x: 0.02, y: 0.045, scale: 0.08 },
+  crossbow: { duration: 0.2, rotate: 0.018, x: -0.035, y: -0.035, scale: -0.025 },
+  lightning: { duration: 0.2, rotate: 0.055, x: 0.035, y: 0.025, scale: 0.055 },
+  longbow: { duration: 0.3, rotate: -0.018, x: 0.015, y: -0.03, scale: 0.02 },
+  greatsword: { duration: 0.46, rotate: -0.17, x: 0.14, y: 0.02, scale: 0.035 },
+  fireball: { duration: 0.38, rotate: 0.04, x: -0.03, y: 0.06, scale: 0.1 },
+});
 
 function angleDifference(from, to) {
   let difference = (to - from + Math.PI) % (Math.PI * 2) - Math.PI;
@@ -20,7 +42,7 @@ export class BotController {
     this.arena = arena;
     this.audio = audio;
     this.root = new THREE.Group();
-    this.root.name = 'grillmaster';
+    this.root.name = 'larp-opponent';
     this.scene.add(this.root);
     this.position = this.root.position;
     this.velocity = new THREE.Vector3();
@@ -30,9 +52,9 @@ export class BotController {
     this.dead = false;
     this.grounded = false;
     this.airTime = 0;
-    this.weaponType = 'sidearm';
-    this.ammo = WEAPONS.sidearm.ammo;
-    this.reserve = WEAPONS.sidearm.reserve;
+    this.weaponType = 'knives';
+    this.ammo = WEAPONS.knives.ammo;
+    this.reserve = WEAPONS.knives.reserve;
     this.reloading = false;
     this.lastShotAt = -Infinity;
     this.sightTime = 0;
@@ -51,12 +73,13 @@ export class BotController {
     this.animTime = 0;
     this.difficulty = 1;
     this.flashHit = 0;
+    this.attackTime = 0;
     this.createModel();
-    this.setWeaponModel('sidearm');
+    this.setWeaponModel('knives');
   }
 
   createModel() {
-    this.spriteTexture = photoAtlasCell(characterAtlas, 0, 4);
+    this.spriteTexture = fighterTexture('knives');
     this.spriteMaterial = new THREE.SpriteMaterial({
       map: this.spriteTexture,
       transparent: true,
@@ -67,16 +90,18 @@ export class BotController {
       toneMapped: true,
     });
     this.sprite = new THREE.Sprite(this.spriteMaterial);
-    this.sprite.name = 'photographic-grillmaster-sprite';
+    this.sprite.name = 'individual-photographic-larp-fighter';
     this.sprite.center.set(0.5, 0.015);
     this.sprite.position.y = 0.015;
-    this.sprite.scale.set(1.55, 2.34, 1);
+    this.sprite.scale.set(1.6, 2.4, 1);
     this.root.add(this.sprite);
-    this.currentFrame = -1;
   }
 
   setWeaponModel(type) {
-    this.sprite.userData.weapon = type;
+    const definition = WEAPONS[type] ?? WEAPONS.knives;
+    this.sprite.userData.weapon = definition.id;
+    this.spriteMaterial.map = fighterTexture(definition.id);
+    this.spriteMaterial.needsUpdate = true;
   }
 
   reset(position, yaw, difficulty = 1) {
@@ -105,11 +130,12 @@ export class BotController {
     this.flashHit = 0;
     this.root.visible = true;
     this.root.rotation.set(0, yaw, 0);
-    this.equip('sidearm');
+    this.attackTime = 0;
+    this.equip('knives');
   }
 
   equip(type) {
-    this.weaponType = type in WEAPONS ? type : 'sidearm';
+    this.weaponType = type in WEAPONS ? type : 'knives';
     this.ammo = WEAPONS[this.weaponType].ammo;
     this.reserve = WEAPONS[this.weaponType].reserve;
     this.reloading = false;
@@ -166,9 +192,9 @@ export class BotController {
       const distance = pickup.position.distanceTo(this.position);
       const playerDistance = pickup.position.distanceTo(playerPosition);
       const desirability =
-        pickup.type === 'rocket' || pickup.type === 'rail'
+        pickup.type === 'fireball' || pickup.type === 'greatsword'
           ? -3.5
-          : pickup.type === 'scatter'
+          : pickup.type === 'ember'
             ? -1
             : 0;
       const score = distance + desirability + Math.max(0, 4 - playerDistance) * 0.5;
@@ -234,12 +260,12 @@ export class BotController {
 
     const needsWeapon =
       this.ammo <= Math.max(2, Math.floor(this.definition.ammo * 0.12)) ||
-      (this.weaponType === 'sidearm' && this.ammo <= 8);
+      (this.weaponType === 'knives' && this.ammo <= 2);
     if (
       this.repathTimer <= 0 ||
       (this.targetPickup && !this.targetPickup.active)
     ) {
-      if (needsWeapon || (this.weaponType === 'sidearm' && Math.random() > 0.35)) {
+      if (needsWeapon || (this.weaponType === 'knives' && Math.random() > 0.35)) {
         this.choosePickup(pickups, player.position);
       } else {
         this.targetPickup = null;
@@ -275,11 +301,13 @@ export class BotController {
       if (distance > 0.01) horizontal.normalize();
       desiredYaw = Math.atan2(-horizontal.x, -horizontal.z);
       const idealDistance =
-        this.weaponType === 'scatter'
+        this.weaponType === 'greatsword'
+          ? 2.1
+          : this.weaponType === 'ember'
           ? 7
-          : this.weaponType === 'rocket'
+          : this.weaponType === 'fireball'
             ? 11
-            : this.weaponType === 'rail' || this.weaponType === 'carbine'
+            : this.weaponType === 'longbow' || this.weaponType === 'crossbow'
               ? 18
               : 12;
       const forwardAmount = clamp((distance - idealDistance) / 3, -1, 1);
@@ -354,7 +382,7 @@ export class BotController {
         const errorScale =
           (0.075 - this.difficulty * 0.025) *
           (this.sightTime < 0.5 ? 1.65 : 1) *
-          (this.weaponType === 'scatter' ? 1.25 : 1);
+          (this.weaponType === 'ember' ? 1.25 : 1);
         this.aimError.set(
           (Math.random() - 0.5) * errorScale,
           (Math.random() - 0.5) * errorScale * 0.75,
@@ -386,6 +414,7 @@ export class BotController {
         this.lastShotAt = time;
         this.ammo -= 1;
         this.recoil = Math.min(1.8, this.recoil + this.definition.recoil);
+        this.attackTime = ATTACK_MOTION[this.weaponType]?.duration ?? 0.2;
         fire = true;
       }
     } else {
@@ -406,16 +435,21 @@ export class BotController {
     const phase = this.animTime * (5.5 + speed * 0.6);
     const horizontalAim = Math.hypot(this.aimDirection.x, this.aimDirection.z);
     this.pitch = Math.atan2(this.aimDirection.y, Math.max(0.001, horizontalAim));
-    let frame = 0;
-    if (this.flashHit > 0) frame = 3;
-    else if (this.recoil > 0.12) frame = 2;
-    else if (motion > 0.12) frame = Math.sin(phase) > 0 ? 1 : 0;
-    if (frame !== this.currentFrame) {
-      this.currentFrame = frame;
-      this.spriteTexture.offset.x = frame * 0.25;
-    }
+    this.attackTime = Math.max(0, this.attackTime - delta);
+    const attack = ATTACK_MOTION[this.weaponType] ?? ATTACK_MOTION.knives;
+    const attackAmount = this.attackTime > 0
+      ? Math.sin((this.attackTime / attack.duration) * Math.PI)
+      : 0;
     const bob = Math.abs(Math.sin(phase)) * 0.025 * motion;
-    this.sprite.position.y = 0.015 + bob;
+    const stride = Math.sin(phase) * 0.025 * motion;
+    this.sprite.position.set(
+      stride + attack.x * attackAmount,
+      0.015 + bob + attack.y * attackAmount,
+      0,
+    );
+    const scale = 1 + attack.scale * attackAmount;
+    this.sprite.scale.set(1.6 * scale, 2.4 * scale, 1);
+    this.sprite.material.rotation = attack.rotate * attackAmount + stride * 0.4;
     this.spriteMaterial.color.setHex(this.flashHit > 0 ? 0xffc2b2 : 0xffffff);
     this.root.updateMatrixWorld(true);
   }

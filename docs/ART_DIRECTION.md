@@ -1,26 +1,60 @@
-# Photographic art direction
+# Photographic LARP art direction
 
-Cookout 2 deliberately uses simple 3D geometry and flat sprites. Realism comes
-from the raster source imagery: ordinary lighting, plausible proportions,
-recognizable household materials, and clean photographic cutouts. Nearest
-filtering and small atlas cells provide the period-game texture cadence without
-turning the source photographs into illustrated pixel art.
+LARP deliberately uses a simple spatial 3D world and flat raster detail. Its
+geometry stays primitive; realism comes from recognizable timber, steel,
+cloth, grass, skin, fire, and lightning captured with ordinary photographic
+lighting and believable proportions.
 
-## Generated asset inventory
+The presentation is intentionally reminiscent of a premium 2010 iPhone game:
+compact low-resolution textures, crisp photo cutouts, warm color grading,
+glossy bevels, leather-like panels, stitched borders, and restrained bloom.
+The photographs remain photographs rather than illustrations, cartoons, or
+overt pixel art.
 
-All files live in `public/assets/cookout/` and were generated with OpenAI's
-built-in image generation tool in imagegen mode.
+## Individual-asset rule
 
-| File | Generation brief |
-| --- | --- |
-| `texture-atlas.png` | Exact 4-by-2 atlas of straight-on stock photographs: grass, fence boards, brick, concrete, house siding, garden soil, hedge leaves, and red gingham cloth. Flat light, tileable framing, no labels. |
-| `grillmaster-frames.png` | Four transparent full-body stock-photo cutouts of the same backyard competitor: idle, run, fire, and hit reactions. Consistent scale, front-biased game-sprite framing, natural clothing and light. |
-| `viewmodel-frames.png` | Four transparent first-person stock-photo frames of real hands holding a compact sporting carbine: idle, firing, magazine out, and magazine in. Fixed camera framing and believable recoil. |
-| `viewmodel-movement-frames.png` | Four transparent first-person stock-photo frames of the same hands and carbine: idle, left step, right step, and sprint-lowered pose. |
-| `weapon-atlas.png` | Four isolated transparent product-photo cutouts: carbine, pump shotgun, scoped rifle, and launcher-like sporting prop. Consistent side view and ordinary studio lighting. |
-| `prop-atlas.png` | Four isolated transparent backyard stock-photo cutouts: gas grill, picnic table, cooler, and patio umbrella. |
-| `fx-atlas.png` | Four isolated transparent photographic effects: airborne projectile, muzzle flash, smoke puff, and dirt impact. |
-| `cover.png` | Square stock-photo-style catalog hero: an ordinary backyard competitor beside a gas grill, gingham table, cooler, umbrella, fence, hedge, and grill smoke at golden hour. No text or UI. |
+Every frame, fighter, pickup, projectile, prop, effect, and surface is stored
+as its own image under `public/assets/larp/`. There are no sprite sheets,
+atlases, or multi-frame source images. The 61 active WebP files are organized
+as follows:
 
-The images are presented as low-resolution texture cells, camera-facing world
-sprites, true-3D projectile sprites, and the fixed first-person viewmodel layer.
+| Directory | Files | Purpose |
+| --- | ---: | --- |
+| `materials/` | 8 | Grass, dirt, cobblestone, timber, hedge, plaster, and roof photographs wrapped over simple geometry. |
+| `props/` | 4 | Individual archery target, canvas tent, hay bale, and wooden cart cutouts. |
+| `pickups/` | 8 | One isolated real weapon or magical implement photograph per weapon. |
+| `fighters/` | 8 | One forward-facing, attack-ready full-body fighter photograph per weapon. |
+| `viewmodels/` | 26 | Separate idle, fire, and reload images for all eight weapons, plus separate draw images for both bows. |
+| `effects/` | 6 | Individual arrow, bolt, knife, fireball, lightning, and dust-impact photographs. |
+| project root | 1 | The photographic Battle Village cover image. |
+
+The source generations were created with OpenAI's built-in image generation
+tool in image-generation mode. Prompts called for standard stock photography,
+real steel and wood weapons, natural human proportions, transparent cutouts,
+ordinary studio or outdoor lighting, and no foam, toy, illustrated, painted,
+or pixel-art treatment.
+
+## First-person framing
+
+Each viewmodel is an independent 768-by-768 transparent image. Idle, attack,
+reload, and bow-draw poses have generous transparent space along their top,
+left, and right edges, so photographs never terminate in a hard rectangular
+cut inside the viewport. Only the lower arms may naturally leave the bottom
+edge. Runtime CSS adds weapon-specific recoil, reload arcs, bow-draw movement,
+sway, bob, focus, and sprint motion without combining frames into a sheet.
+
+## World sprites and projectiles
+
+Fighter cutouts always aim toward the camera so a head-on opponent visibly
+attacks forward. Each weapon swaps to a distinct fighter image. The renderer
+uses camera-facing sprites for people and pickups.
+
+Arrows, crossbow bolts, and throwing knives are not generic particles. Each is
+an individual transparent photograph on a plane mesh. The mesh's local
+horizontal axis is aligned to its actual 3D travel vector every frame while
+its plane normal remains camera-readable. Fireballs move through the same
+spatial world with server-authoritative gameplay simulation.
+
+Shipped images are downsampled and alpha-preserving WebP files. This retains
+the deliberately low-resolution photographic character while reducing the
+active raster payload from roughly 81 MB of source PNGs to about 2.8 MB.

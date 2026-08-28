@@ -77,7 +77,7 @@ export class Interface {
     this.postFlash = byId('post-flash');
     this.errorDetail = byId('error-detail');
     this.onlineMatch = false;
-    this.currentOpponent = 'GRILLMASTER';
+    this.currentOpponent = 'QUESTMASTER';
     this.pickupUntil = 0;
     this.hitUntil = 0;
     this.damageUntil = 0;
@@ -102,10 +102,10 @@ export class Interface {
     this.privateRoomControls.classList.remove('hidden');
     this.queueState.classList.add('hidden');
     this.copyRoomButton.classList.add('hidden');
-    this.lobbyKicker.textContent = 'LOCKED BACKYARD';
-    this.lobbyTitle.innerHTML = 'PRIVATE<br>PATIO';
+    this.lobbyKicker.textContent = 'RESERVED FIELD';
+    this.lobbyTitle.innerHTML = 'PRIVATE<br>FIELD';
     this.lobbyDetail.textContent =
-      'Open a locked yard or enter a five-character gate code.';
+      'Reserve a field or enter a five-character rune code.';
     this.roomCodeInput.value = String(prefill).toUpperCase().slice(0, 5);
     if (prefill) window.setTimeout(() => this.roomCodeInput.focus(), 0);
   }
@@ -120,8 +120,8 @@ export class Interface {
     this.lobbyDetail.textContent = detail;
     this.queueCode.textContent = code;
     this.queueMessage.textContent = code
-      ? 'Gate code secured. Waiting for the second player.'
-      : 'Searching the block for a low-latency opponent.';
+      ? 'Rune code secured. Waiting for the second player.'
+      : 'Searching the realm for a low-latency opponent.';
     this.copyRoomButton.classList.toggle('hidden', !copyable);
   }
 
@@ -158,9 +158,9 @@ export class Interface {
     );
   }
 
-  setOnlineMatch(active, opponent = 'GRILLMASTER') {
+  setOnlineMatch(active, opponent = 'QUESTMASTER') {
     this.onlineMatch = active;
-    this.currentOpponent = opponent || 'NEIGHBOR';
+    this.currentOpponent = opponent || 'RIVAL';
     this.opponentName.textContent = this.currentOpponent;
     this.resultOpponentName.textContent = this.currentOpponent;
     this.networkMeter.classList.toggle('hidden', !active);
@@ -200,14 +200,14 @@ export class Interface {
     this.hud.classList.add('hidden');
     this.announcement.classList.add('hidden');
     this.pauseScreen.classList.remove('active');
-    this.resultKicker.textContent = won ? 'COOKOUT COMPLETE' : 'PLATE DROPPED';
-    this.resultTitle.innerHTML = won ? 'YARD<br>SECURED' : 'YARD<br>LOST';
+    this.resultKicker.textContent = won ? 'QUEST COMPLETE' : 'DUEL LOST';
+    this.resultTitle.innerHTML = won ? 'REALM<br>CLAIMED' : 'REALM<br>LOST';
     this.resultPlayerScore.textContent = playerScore;
     this.resultBotScore.textContent = botScore;
     this.resultOpponentName.textContent = opponent;
     this.resultDetail.textContent = won
-      ? 'You owned the lanes, controlled the gear, and ruled the block.'
-      : `${opponent} claimed the yard. Move sooner, control the coolers, run it back.`;
+      ? 'You owned the lanes, controlled the relics, and claimed the realm.'
+      : `${opponent} claimed the field. Rotate sooner, control the relics, and run it back.`;
     this.rematchButton.querySelector('span').textContent = this.onlineMatch
       ? 'REQUEST REMATCH'
       : 'RUN IT AGAIN';
@@ -216,7 +216,7 @@ export class Interface {
 
   showRematchWaiting() {
     this.rematchButton.querySelector('span').textContent = 'REMATCH REQUESTED';
-    this.rematchButton.querySelector('small').textContent = 'WAITING FOR NEIGHBOR';
+    this.rematchButton.querySelector('small').textContent = 'WAITING FOR RIVAL';
     this.rematchButton.disabled = true;
   }
 
@@ -286,10 +286,10 @@ export class Interface {
     } else if (!player.grounded && player.velocity.y > 0.5) {
       movementLabel = 'AIRBORNE';
     } else if (player.reloading) {
-      movementLabel = 'RELOADING';
+      movementLabel = 'READYING';
       hot = true;
     } else if (player.ammo <= 0) {
-      movementLabel = player.reserve > 0 ? 'R TO RELOAD' : 'FIND A WEAPON';
+      movementLabel = player.reserve > 0 ? 'R TO READY' : 'FIND A RELIC';
       hot = true;
     }
     if (this.movementState.textContent !== movementLabel) {
