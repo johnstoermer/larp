@@ -1,15 +1,11 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { chromium } from 'playwright';
+import { launchChromium, pathFromUrl } from './browser.mjs';
 
 const baseUrl = process.env.LARP_PORTAL_URL || 'https://herm.cool/games/larp';
 const output = new URL('../artifacts/', import.meta.url);
 await mkdir(output, { recursive: true });
 
-const browser = await chromium.launch({
-  headless: true,
-  executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-  args: ['--enable-webgl', '--ignore-gpu-blocklist'],
-});
+const browser = await launchChromium();
 
 try {
   const page = await browser.newPage({
@@ -49,7 +45,7 @@ try {
     errors,
   };
   await page.screenshot({
-    path: new URL('portal-production.png', output).pathname.slice(1),
+    path: pathFromUrl(new URL('portal-production.png', output)),
     fullPage: true,
   });
   await writeFile(

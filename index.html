@@ -11,7 +11,7 @@
     <meta property="og:title" content="LARP" />
     <meta
       property="og:description"
-      content="Steel, spells, and live online duels in Battle Village."
+      content="Foam, spells, and live online duels in Battle Village."
     />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://herm.cool/games/larp/" />
@@ -30,91 +30,110 @@
 
       <section id="title-screen" class="screen active" aria-labelledby="game-title">
         <div class="title-rule title-rule-top"></div>
-        <div class="title-copy">
-          <p class="kicker">BATTLE VILLAGE // LIVE ACTION ROLEPLAY</p>
-          <h1 id="game-title">LARP</h1>
-          <p class="title-statement">
-            Steel weapons. Real rivals.<br />
-            Hold the village.
-          </p>
-          <div class="title-actions">
-            <button id="online-button" class="action-button">
-              <span>QUICK MATCH</span>
-              <small>FIND A RIVAL</small>
-            </button>
-            <div class="title-secondary-actions">
-              <button id="private-button" class="text-button">PRIVATE FIELD</button>
-              <button id="start-button" class="text-button">PRACTICE VS. QUESTMASTER</button>
+        <div class="title-copy window">
+          <div class="title-bar">
+            <div class="title-bar-text">LARP.EXE — Battle Village</div>
+            <div class="title-bar-controls" aria-hidden="true">
+              <button type="button" aria-label="Minimize" disabled tabindex="-1"></button>
+              <button type="button" aria-label="Maximize" disabled tabindex="-1"></button>
             </div>
-            <label class="callsign-field">
-              <span>CHARACTER NAME</span>
-              <input id="callsign" type="text" maxlength="18" autocomplete="nickname" spellcheck="false" value="ROOKIE" />
-            </label>
+          </div>
+          <div class="window-body title-window-body">
+            <p class="kicker">BATTLE VILLAGE // LIVE ACTION ROLEPLAY</p>
+            <h1 id="game-title">LARP</h1>
+            <p class="title-statement">
+              Foam weapons. Real rivals.<br />
+              Hold the village.
+            </p>
+            <div class="title-actions">
+              <button id="online-button" class="action-button default">
+                <span>QUICK MATCH</span>
+                <small>FIND A RIVAL</small>
+              </button>
+              <div class="title-secondary-actions">
+                <button id="private-button" class="text-button">PRIVATE FIELD</button>
+                <button id="start-button" class="text-button">PRACTICE VS. QUESTMASTER</button>
+              </div>
+              <label class="callsign-field field-row-stacked">
+                <span>CHARACTER NAME</span>
+                <input id="callsign" type="text" maxlength="18" autocomplete="nickname" spellcheck="false" value="ROOKIE" />
+              </label>
+            </div>
           </div>
         </div>
 
-        <div class="title-format" aria-label="Match format">
-          <div><strong>02</strong><span>DUELS<br />TAKE A ROUND</span></div>
-          <div><strong>04</strong><span>ROUNDS<br />CLAIM THE REALM</span></div>
+        <div class="title-format window" aria-label="Match format">
+          <div class="title-bar"><div class="title-bar-text">Match Format</div></div>
+          <div class="window-body title-format-body">
+            <div><strong>02</strong><span>DUELS<br />TAKE A ROUND</span></div>
+            <div><strong>04</strong><span>ROUNDS<br />CLAIM THE REALM</span></div>
+          </div>
         </div>
 
-        <div class="title-controls" aria-label="Controls">
-          <p>FIELD MANUAL</p>
-          <dl>
-            <div><dt>WASD</dt><dd>Move</dd></div>
-            <div><dt>Mouse</dt><dd>Aim / use weapon</dd></div>
-            <div><dt>Right mouse</dt><dd>Focus aim</dd></div>
-            <div><dt>Shift</dt><dd>Sprint</dd></div>
-            <div><dt>Ctrl</dt><dd>Slide</dd></div>
-            <div><dt>Space</dt><dd>Jump / wall-run</dd></div>
-            <div><dt>R</dt><dd>Ready weapon</dd></div>
-          </dl>
+        <div class="title-controls window" aria-label="Controls">
+          <div class="title-bar"><div class="title-bar-text">Field Manual</div></div>
+          <div class="window-body title-controls-body">
+            <dl class="sunken-panel">
+              <div><dt>WASD</dt><dd>Move</dd></div>
+              <div><dt>Mouse</dt><dd>Aim / use weapon</dd></div>
+              <div><dt>Right mouse</dt><dd>Focus aim</dd></div>
+              <div><dt>Shift</dt><dd>Sprint</dd></div>
+              <div><dt>Ctrl</dt><dd>Slide</dd></div>
+              <div><dt>Space</dt><dd>Jump / wall-run</dd></div>
+              <div><dt>R</dt><dd>Ready weapon</dd></div>
+            </dl>
+          </div>
         </div>
 
-        <p class="title-build">
-          <span id="title-network-state">MATCH SERVICE READY</span><i></i>INDIVIDUAL PHOTO ENGINE
-        </p>
+        <div class="title-build status-bar">
+          <p class="status-bar-field"><span id="title-network-state">MATCH SERVICE READY</span></p>
+          <p class="status-bar-field">INDIVIDUAL PHOTO ENGINE</p>
+        </div>
         <div class="title-rule title-rule-bottom"></div>
       </section>
 
       <section id="network-lobby" class="screen" aria-labelledby="lobby-title">
-        <div class="lobby-shell">
-          <header>
-            <p id="lobby-kicker" class="kicker">LIVE REALM SERVICE</p>
-            <button id="lobby-close-button" class="lobby-close" aria-label="Close network menu">CLOSE</button>
+        <div class="lobby-shell window">
+          <header class="title-bar">
+            <p id="lobby-kicker" class="kicker title-bar-text">LIVE REALM SERVICE</p>
+            <div class="title-bar-controls">
+              <button id="lobby-close-button" class="lobby-close close" aria-label="Close network menu"></button>
+            </div>
           </header>
-          <h2 id="lobby-title">PRIVATE<br />FIELD</h2>
-          <p id="lobby-detail">Reserve a field or enter a five-character rune code.</p>
+          <div class="window-body lobby-window-body">
+            <h2 id="lobby-title">PRIVATE<br />FIELD</h2>
+            <p id="lobby-detail">Reserve a field or enter a five-character rune code.</p>
 
-          <div id="private-room-controls" class="private-room-controls">
-            <button id="create-room-button" class="action-button">
-              <span>RESERVE THE FIELD</span><small>HOST</small>
-            </button>
-            <div class="join-room">
-              <label for="room-code-input">RUNE CODE</label>
-              <div>
-                <input id="room-code-input" type="text" maxlength="5" autocomplete="off" spellcheck="false" placeholder="-----" />
-                <button id="join-room-button">JOIN</button>
+            <div id="private-room-controls" class="private-room-controls">
+              <button id="create-room-button" class="action-button default">
+                <span>RESERVE THE FIELD</span><small>HOST</small>
+              </button>
+              <div class="join-room field-row-stacked">
+                <label for="room-code-input">RUNE CODE</label>
+                <div>
+                  <input id="room-code-input" type="text" maxlength="5" autocomplete="off" spellcheck="false" placeholder="-----" />
+                  <button id="join-room-button">JOIN</button>
+                </div>
               </div>
+            </div>
+
+            <div id="queue-state" class="queue-state sunken-panel hidden">
+              <div class="queue-scope" aria-hidden="true"><i></i><i></i><i></i></div>
+              <strong id="queue-code"></strong>
+              <p id="queue-message">Looking across the realm for another player.</p>
+              <button id="copy-room-button" class="text-button hidden">COPY INVITE LINK</button>
             </div>
           </div>
 
-          <div id="queue-state" class="queue-state hidden">
-            <div class="queue-scope" aria-hidden="true"><i></i><i></i><i></i></div>
-            <strong id="queue-code"></strong>
-            <p id="queue-message">Looking across the realm for another player.</p>
-            <button id="copy-room-button" class="text-button hidden">COPY INVITE LINK</button>
-          </div>
-
-          <footer>
-            <span><i id="lobby-connection-light"></i><b id="lobby-connection">CONNECTING</b></span>
-            <span id="lobby-latency">-- MS</span>
+          <footer class="status-bar">
+            <span class="status-bar-field"><i id="lobby-connection-light"></i><b id="lobby-connection">CONNECTING</b></span>
+            <span id="lobby-latency" class="status-bar-field">-- MS</span>
           </footer>
         </div>
       </section>
 
       <section id="hud" class="hidden" aria-label="Match status">
-        <header class="match-header">
+        <header class="match-header window">
           <div class="combatant combatant-player">
             <span class="combatant-name">YOUR SIDE</span><strong id="player-rounds">0</strong>
             <span id="player-takes" class="take-marks" aria-label="Your duel wins"></span>
@@ -129,22 +148,22 @@
           </div>
         </header>
 
-        <div id="network-meter" class="network-meter hidden">
+        <div id="network-meter" class="network-meter status-bar hidden">
           <i></i><span id="network-mode">LIVE</span><strong id="network-ping">-- MS</strong>
         </div>
 
-        <div class="status-panel health-panel">
+        <div class="status-panel health-panel window">
           <span class="status-label">VITALITY</span><strong id="health-value">100</strong>
           <div class="status-track"><i id="health-fill"></i></div>
         </div>
-        <div class="status-panel ammo-panel">
+        <div class="status-panel ammo-panel window">
           <span id="weapon-name" class="status-label">THROWING KNIVES</span>
           <strong><span id="ammo-value">05</span><small id="ammo-reserve"> / 20</small></strong>
-          <span id="fire-mode">THROW / STEEL</span>
+          <span id="fire-mode">THROW / FOAM</span>
         </div>
 
-        <div id="movement-state">READY</div>
-        <div id="pickup-toast"><span>GEAR</span><strong></strong></div>
+        <div id="movement-state" class="status-bar-field">READY</div>
+        <div id="pickup-toast" class="window"><span>GEAR</span><strong></strong></div>
         <div id="crosshair" aria-hidden="true">
           <i class="crosshair-top"></i><i class="crosshair-right"></i>
           <i class="crosshair-bottom"></i><i class="crosshair-left"></i><b></b>
@@ -159,37 +178,43 @@
       </section>
 
       <section id="pause-screen" class="screen" aria-labelledby="pause-title">
-        <div class="pause-box">
-          <p class="kicker">MARSHAL TIMEOUT</p><h2 id="pause-title">PAUSED</h2>
-          <button id="resume-button" class="action-button"><span>BACK TO THE FIELD</span><small>PRESS ESCAPE</small></button>
-          <button id="restart-button" class="text-button">RESTART PRACTICE</button>
-          <button id="quit-button" class="text-button">LEAVE THE REALM</button>
-          <label class="sensitivity-control">
-            <span>LOOK SENSITIVITY</span>
-            <input id="sensitivity" type="range" min="0.35" max="1.65" step="0.05" value="0.85" />
-          </label>
-          <label class="performance-control">
-            <span>PHOTO RESOLUTION</span>
-            <select id="quality-profile">
-              <option value="auto">AUTO / ADAPTIVE</option>
-              <option value="high">HIGH / SHARP</option>
-              <option value="performance">LOW-RES / CLASSIC 3D</option>
-            </select>
-          </label>
+        <div class="pause-box window">
+          <div class="title-bar"><div class="title-bar-text">LARP — Game Paused</div></div>
+          <div class="window-body pause-window-body">
+            <p class="kicker">MARSHAL TIMEOUT</p><h2 id="pause-title">PAUSED</h2>
+            <button id="resume-button" class="action-button default"><span>BACK TO THE FIELD</span><small>PRESS ESCAPE</small></button>
+            <button id="restart-button" class="text-button">RESTART PRACTICE</button>
+            <button id="quit-button" class="text-button">LEAVE THE REALM</button>
+            <label class="sensitivity-control field-row-stacked">
+              <span>LOOK SENSITIVITY</span>
+              <input id="sensitivity" type="range" min="0.35" max="1.65" step="0.05" value="0.85" />
+            </label>
+            <label class="performance-control field-row-stacked">
+              <span>PHOTO RESOLUTION</span>
+              <select id="quality-profile">
+                <option value="auto">AUTO / ADAPTIVE</option>
+                <option value="high">HIGH / SHARP</option>
+                <option value="performance">LOW-RES / CLASSIC 3D</option>
+              </select>
+            </label>
+          </div>
         </div>
       </section>
 
       <section id="result-screen" class="screen" aria-labelledby="result-title">
-        <div class="result-copy">
-          <p id="result-kicker" class="kicker">QUEST COMPLETE</p>
-          <h2 id="result-title">REALM<br />CLAIMED</h2>
-          <div class="result-score">
-            <div><span>YOU</span><strong id="result-player-score">4</strong></div><i></i>
-            <div><strong id="result-bot-score">2</strong><span id="result-opponent-name">QUESTMASTER</span></div>
+        <div class="result-copy window">
+          <div class="title-bar"><div class="title-bar-text">LARP — Match Results</div></div>
+          <div class="window-body result-window-body">
+            <p id="result-kicker" class="kicker">QUEST COMPLETE</p>
+            <h2 id="result-title">REALM<br />CLAIMED</h2>
+            <div class="result-score sunken-panel">
+              <div><span>YOU</span><strong id="result-player-score">4</strong></div><i></i>
+              <div><strong id="result-bot-score">2</strong><span id="result-opponent-name">QUESTMASTER</span></div>
+            </div>
+            <p id="result-detail"></p>
+            <button id="rematch-button" class="action-button default"><span>RUN IT BACK</span><small>PRESS ENTER</small></button>
+            <button id="result-quit-button" class="text-button">RETURN TO MENU</button>
           </div>
-          <p id="result-detail"></p>
-          <button id="rematch-button" class="action-button"><span>RUN IT BACK</span><small>PRESS ENTER</small></button>
-          <button id="result-quit-button" class="text-button">RETURN TO MENU</button>
         </div>
       </section>
 

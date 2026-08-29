@@ -8,15 +8,56 @@ const TEMP_B = new THREE.Vector3();
 const TEMP_C = new THREE.Vector3();
 const fighterTextures = new Map();
 
-function fighterTexture(type) {
+export const FIGHTER_ANIMATION_STATES = Object.freeze([
+  'idle',
+  'walk',
+  'attack',
+  'hit',
+  'death',
+]);
+export const FIGHTER_WALK_SPEED_THRESHOLD = 0.35;
+
+function normalizeFighterState(state) {
+  return FIGHTER_ANIMATION_STATES.includes(state) ? state : 'idle';
+}
+
+export function fighterTextureUrl(type, state = 'idle') {
   const definition = WEAPONS[type] ?? WEAPONS.knives;
-  if (!fighterTextures.has(definition.id)) {
+  return `/assets/larp/fighters/${definition.asset}-${normalizeFighterState(state)}.webp`;
+}
+
+function fighterTexture(type, state = 'idle') {
+  const definition = WEAPONS[type] ?? WEAPONS.knives;
+  const normalizedState = normalizeFighterState(state);
+  const key = `${definition.id}:${normalizedState}`;
+  if (!fighterTextures.has(key)) {
     fighterTextures.set(
-      definition.id,
-      loadPhotoTexture(`/assets/larp/fighters/${definition.asset}.webp`),
+      key,
+      loadPhotoTexture(fighterTextureUrl(definition.id, normalizedState)),
     );
   }
-  return fighterTextures.get(definition.id);
+  return fighterTextures.get(key);
+}
+
+function preloadFighterTextures() {
+  for (const definition of Object.values(WEAPONS)) {
+    for (const state of FIGHTER_ANIMATION_STATES) {
+      fighterTexture(definition.id, state);
+    }
+  }
+}
+
+export function selectFighterState({
+  dead = false,
+  flashHit = 0,
+  attackTime = 0,
+  speed = 0,
+} = {}) {
+  if (dead) return 'death';
+  if (Number.isFinite(flashHit) && flashHit > 0) return 'hit';
+  if (Number.isFinite(attackTime) && attackTime > 0) return 'attack';
+  if (Number.isFinite(speed) && speed > FIGHTER_WALK_SPEED_THRESHOLD) return 'walk';
+  return 'idle';
 }
 
 const ATTACK_MOTION = Object.freeze({
@@ -29,6 +70,18 @@ const ATTACK_MOTION = Object.freeze({
   greatsword: { duration: 0.46, rotate: -0.17, x: 0.14, y: 0.02, scale: 0.035 },
   fireball: { duration: 0.38, rotate: 0.04, x: -0.03, y: 0.06, scale: 0.1 },
 });
+
+// The greatsword and longbow photographs devote more of their canvas to a
+// tall prop, so their people need a small presentation correction to match the
+// apparent body scale of the rest of the roster.
+const FIGHTER_PRESENTATION_SCALE = Object.freeze({
+  longbow: 1.13,
+  greatsword: 1.18,
+});
+
+function fighterPresentationScale(type) {
+  return FIGHTER_PRESENTATION_SCALE[type] ?? 1;
+}
 
 function angleDifference(from, to) {
   let difference = (to - from + Math.PI) % (Math.PI * 2) - Math.PI;
@@ -74,12 +127,14 @@ export class BotController {
     this.difficulty = 1;
     this.flashHit = 0;
     this.attackTime = 0;
+    this.fighterState = 'idle';
+    preloadFighterTextures();
     this.createModel();
     this.setWeaponModel('knives');
   }
 
   createModel() {
-    this.spriteTexture = fighterTexture('knives');
+    this.spriteTexture = fighterTexture('knives', 'idle');
     this.spriteMaterial = new THREE.SpriteMaterial({
       map: this.spriteTexture,
       transparent: true,
@@ -91,6 +146,7 @@ export class BotController {
     });
     this.sprite = new THREE.Sprite(this.spriteMaterial);
     this.sprite.name = 'individual-photographic-larp-fighter';
+    this.sprite.userData.state = 'idle';
     this.sprite.center.set(0.5, 0.015);
     this.sprite.position.y = 0.015;
     this.sprite.scale.set(1.6, 2.4, 1);
@@ -100,8 +156,32 @@ export class BotController {
   setWeaponModel(type) {
     const definition = WEAPONS[type] ?? WEAPONS.knives;
     this.sprite.userData.weapon = definition.id;
-    this.spriteMaterial.map = fighterTexture(definition.id);
+    this.setFighterState(this.fighterState, true);
+    const presentationScale = fighterPresentationScale(definition.id);
+    this.sprite.scale.set(1.6 * presentationScale, 2.4 * presentationScale, 1);
+  }
+
+  setFighterState(state, force = false) {
+    const normalizedState = normalizeFighterState(state);
+    if (!force && normalizedState === this.fighterState) return false;
+    this.fighterState = normalizedState;
+    this.sprite.userData.state = normalizedState;
+    this.spriteTexture = fighterTexture(this.weaponType, normalizedState);
+    this.spriteMaterial.map = this.spriteTexture;
     this.spriteMaterial.needsUpdate = true;
+    return true;
+  }
+
+  updateFighterState() {
+    const speed = Math.hypot(this.velocity.x, this.velocity.z);
+    const state = selectFighterState({
+      dead: this.dead,
+      flashHit: this.flashHit,
+      attackTime: this.attackTime,
+      speed,
+    });
+    this.setFighterState(state);
+    return state;
   }
 
   reset(position, yaw, difficulty = 1) {
@@ -132,6 +212,7 @@ export class BotController {
     this.root.rotation.set(0, yaw, 0);
     this.attackTime = 0;
     this.equip('knives');
+    this.setFighterState('idle', true);
   }
 
   equip(type) {
@@ -174,9 +255,10 @@ export class BotController {
     if (this.health <= 0) {
       this.health = 0;
       this.dead = true;
-      this.root.visible = false;
+      this.root.visible = true;
       this.velocity.multiplyScalar(0.2);
     }
+    this.updateFighterState();
     return applied;
   }
 
@@ -231,12 +313,10 @@ export class BotController {
   update(delta, time, player, pickups, canAct = true) {
     const dt = Math.min(delta, 0.034);
     if (this.dead) return { fire: false, pickup: null };
-    this.animTime += dt;
     this.jumpCooldown = Math.max(0, this.jumpCooldown - dt);
     this.repathTimer -= dt;
     this.strafeTimer -= dt;
     this.errorTimer -= dt;
-    this.flashHit = Math.max(0, this.flashHit - dt);
     this.recoil = damp(this.recoil, 0, 12, dt);
 
     const eye = this.getEyePosition(TEMP_A);
@@ -259,8 +339,10 @@ export class BotController {
     }
 
     const needsWeapon =
-      this.ammo <= Math.max(2, Math.floor(this.definition.ammo * 0.12)) ||
-      (this.weaponType === 'knives' && this.ammo <= 2);
+      this.definition.usesAmmo !== false && (
+        this.ammo <= Math.max(2, Math.floor(this.definition.ammo * 0.12)) ||
+        (this.weaponType === 'knives' && this.ammo <= 2)
+      );
     if (
       this.repathTimer <= 0 ||
       (this.targetPickup && !this.targetPickup.active)
@@ -377,7 +459,12 @@ export class BotController {
     }
 
     let fire = false;
-    if (canAct && hasSight && !player.dead && this.ammo > 0) {
+    if (
+      canAct &&
+      hasSight &&
+      !player.dead &&
+      (this.definition.usesAmmo === false || this.ammo > 0)
+    ) {
       if (this.errorTimer <= 0) {
         const errorScale =
           (0.075 - this.difficulty * 0.025) *
@@ -412,7 +499,7 @@ export class BotController {
         time - this.lastShotAt >= interval
       ) {
         this.lastShotAt = time;
-        this.ammo -= 1;
+        if (this.definition.usesAmmo !== false) this.ammo -= 1;
         this.recoil = Math.min(1.8, this.recoil + this.definition.recoil);
         this.attackTime = ATTACK_MOTION[this.weaponType]?.duration ?? 0.2;
         fire = true;
@@ -430,27 +517,32 @@ export class BotController {
   }
 
   animate(delta, wish, aiming) {
+    const dt = Number.isFinite(delta) ? Math.max(0, delta) : 0;
+    this.animTime += dt;
     const speed = Math.hypot(this.velocity.x, this.velocity.z);
     const motion = clamp(speed / 6, 0, 1);
     const phase = this.animTime * (5.5 + speed * 0.6);
     const horizontalAim = Math.hypot(this.aimDirection.x, this.aimDirection.z);
     this.pitch = Math.atan2(this.aimDirection.y, Math.max(0.001, horizontalAim));
-    this.attackTime = Math.max(0, this.attackTime - delta);
+    const fighterState = this.updateFighterState();
     const attack = ATTACK_MOTION[this.weaponType] ?? ATTACK_MOTION.knives;
-    const attackAmount = this.attackTime > 0
+    const attackAmount = fighterState === 'attack' && this.attackTime > 0
       ? Math.sin((this.attackTime / attack.duration) * Math.PI)
       : 0;
-    const bob = Math.abs(Math.sin(phase)) * 0.025 * motion;
-    const stride = Math.sin(phase) * 0.025 * motion;
+    const walking = fighterState === 'walk';
+    const bob = walking ? Math.abs(Math.sin(phase)) * 0.025 * motion : 0;
+    const stride = walking ? Math.sin(phase) * 0.025 * motion : 0;
     this.sprite.position.set(
       stride + attack.x * attackAmount,
       0.015 + bob + attack.y * attackAmount,
       0,
     );
-    const scale = 1 + attack.scale * attackAmount;
+    const scale = fighterPresentationScale(this.weaponType) * (1 + attack.scale * attackAmount);
     this.sprite.scale.set(1.6 * scale, 2.4 * scale, 1);
     this.sprite.material.rotation = attack.rotate * attackAmount + stride * 0.4;
     this.spriteMaterial.color.setHex(this.flashHit > 0 ? 0xffc2b2 : 0xffffff);
+    this.flashHit = Math.max(0, this.flashHit - dt);
+    this.attackTime = Math.max(0, this.attackTime - dt);
     this.root.updateMatrixWorld(true);
   }
 }

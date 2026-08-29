@@ -1,17 +1,12 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { chromium } from 'playwright';
+import { launchChromium, pathFromUrl } from './browser.mjs';
 
 const baseUrl = process.env.LARP_URL || 'http://127.0.0.1:8080';
 const output = new URL('../artifacts/', import.meta.url);
 await mkdir(output, { recursive: true });
 
-const browser = await chromium.launch({
-  headless: true,
-  executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+const browser = await launchChromium({
   args: [
-    '--use-angle=swiftshader',
-    '--enable-webgl',
-    '--ignore-gpu-blocklist',
     '--disable-background-timer-throttling',
     '--disable-backgrounding-occluded-windows',
     '--disable-renderer-backgrounding',
@@ -103,7 +98,22 @@ try {
   );
   await alpha.page.keyboard.down('ShiftLeft');
   await alpha.page.keyboard.down('KeyW');
-  await alpha.page.waitForTimeout(3500);
+  await alpha.page.waitForFunction(
+    () => {
+      const keys = window.__LARP_GAME__?.player?.keys;
+      return keys?.has('ShiftLeft') && keys?.has('KeyW');
+    },
+    null,
+    { timeout: 3000 },
+  );
+  await alpha.page.waitForFunction(
+    (start) => {
+      const position = window.__LARP_GAME__?.player?.position;
+      return position && Math.hypot(position.x - start[0], position.z - start[2]) >= 1;
+    },
+    beforeMovement,
+    { timeout: 10_000 },
+  );
   await alpha.page.keyboard.up('KeyW');
   await alpha.page.keyboard.up('ShiftLeft');
   await alpha.page.waitForTimeout(500);
@@ -148,6 +158,8 @@ try {
   const shotBefore = await alpha.page.evaluate(() => ({
     ammo: window.__LARP_GAME__.player.ammo,
     weapon: window.__LARP_GAME__.player.weaponType,
+    usesAmmo: window.__LARP_GAME__.player.definition.usesAmmo !== false,
+    sequence: window.__LARP_GAME__.onlineShotSequence,
   }));
   await alpha.page.mouse.down();
   if (shotBefore.weapon === 'shortbow' || shotBefore.weapon === 'longbow') {
@@ -161,14 +173,35 @@ try {
   }
   await alpha.page.mouse.up();
   await alpha.page.waitForFunction(
-    (before) => window.__LARP_GAME__.player.ammo < before,
-    shotBefore.ammo,
-  );
-  await bravo.page.waitForFunction(
-    (before) => window.__LARP_GAME__.bot.ammo < before,
-    shotBefore.ammo,
+    (before) => window.__LARP_GAME__.onlineShotSequence > before,
+    shotBefore.sequence,
     { timeout: 5000 },
   );
+  if (shotBefore.usesAmmo) {
+    await alpha.page.waitForFunction(
+      (before) => window.__LARP_GAME__.player.ammo < before,
+      shotBefore.ammo,
+      { timeout: 5000 },
+    );
+    await bravo.page.waitForFunction(
+      (before) => window.__LARP_GAME__.bot.ammo < before,
+      shotBefore.ammo,
+      { timeout: 5000 },
+    );
+  } else {
+    await alpha.page.waitForFunction(
+      (before) => window.__LARP_GAME__.player.ammo === before,
+      shotBefore.ammo,
+      { timeout: 5000 },
+    );
+    await bravo.page.waitForFunction(
+      (weapon) =>
+        window.__LARP_GAME__.bot.weaponType === weapon &&
+        window.__LARP_GAME__.bot.attackTime > 0,
+      shotBefore.weapon,
+      { timeout: 5000 },
+    );
+  }
   const weaponSync = await Promise.all(
     [alpha.page, bravo.page].map((page) =>
       page.evaluate(() => ({
@@ -270,7 +303,7 @@ try {
   }
 
   await alpha.page.screenshot({
-    path: new URL('multiplayer-alpha.png', output).pathname.slice(1),
+    path: pathFromUrl(new URL('multiplayer-alpha.png', output)),
     fullPage: true,
   });
   const status = await fetch(`${baseUrl}/api/status`).then((response) =>

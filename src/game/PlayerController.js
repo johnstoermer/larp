@@ -1,5 +1,10 @@
 import * as THREE from 'three';
 import { clamp, damp, moveToward } from './math.js';
+import {
+  createViewmodelFrameSet,
+  normalizeViewmodelState,
+  SteppedViewmodelAnimation,
+} from './viewmodelAnimation.js';
 import { WEAPONS } from './weapons.js';
 
 const FORWARD = new THREE.Vector3();
@@ -79,6 +84,9 @@ export class PlayerController {
     this.viewmodelSprite = document.getElementById('viewmodel-sprite');
     this.viewmodelFrameKey = '';
     this.viewmodelFrames = new Map();
+    this.viewmodelFrameSets = new Map();
+    this.viewmodelResolvedUrls = new Map();
+    this.viewmodelAnimation = new SteppedViewmodelAnimation();
     this.viewRoot = new THREE.Group();
     this.viewRoot.name = 'first-person-view-model';
     let viewVisible = true;
@@ -140,40 +148,130 @@ export class PlayerController {
   }
 
   preloadViewmodelFrames() {
-    if (typeof Image === 'undefined') return;
     for (const definition of Object.values(WEAPONS)) {
-      const states = ['idle', 'fire', 'reload'];
-      if (BOW_WEAPONS.has(definition.id)) states.push('draw');
-      for (const state of states) {
-        const url = `/assets/larp/viewmodels/${definition.asset}-${state}.webp`;
-        const image = new Image();
-        image.decoding = 'async';
-        image.src = url;
-        this.viewmodelFrames.set(`${definition.id}:${state}`, image);
+      const frameSet = createViewmodelFrameSet(definition, {
+        isBow: BOW_WEAPONS.has(definition.id),
+      });
+      this.viewmodelFrameSets.set(definition.id, frameSet);
+      if (typeof Image === 'undefined') continue;
+      for (const frames of Object.values(frameSet)) {
+        for (const frame of frames) this.preloadViewmodelFrame(frame);
       }
     }
   }
 
-  setViewmodelFrame(state = 'idle') {
+  preloadViewmodelFrame(frame) {
+    const image = new Image();
+    image.decoding = 'async';
+
+    const showLoadedCandidate = () => {
+      this.viewmodelResolvedUrls.set(frame.key, frame.url);
+      if (this.viewmodelFrameKey === frame.key && this.viewmodelSprite) {
+        this.viewmodelSprite.style.backgroundImage = `url('${frame.url}')`;
+      }
+    };
+    image.onload = showLoadedCandidate;
+
+    this.viewmodelFrames.set(frame.key, image);
+    this.viewmodelResolvedUrls.set(frame.key, frame.url);
+    image.src = frame.url;
+  }
+
+  getViewmodelFrameSet(definition) {
+    if (!this.viewmodelFrameSets.has(definition.id)) {
+      this.viewmodelFrameSets.set(
+        definition.id,
+        createViewmodelFrameSet(definition, {
+          isBow: BOW_WEAPONS.has(definition.id),
+        }),
+      );
+    }
+    return this.viewmodelFrameSets.get(definition.id);
+  }
+
+  setViewmodelFrame(state = 'idle', frameIndex = 0) {
     if (!this.viewmodelSprite) return;
     const definition = this.definition ?? WEAPONS.knives;
-    const resolvedState = state === 'draw' && !BOW_WEAPONS.has(definition.id)
-      ? 'idle'
-      : state;
-    const key = `${definition.id}:${resolvedState}`;
-    if (key === this.viewmodelFrameKey) return;
-    this.viewmodelFrameKey = key;
+    const resolvedState = normalizeViewmodelState(
+      state,
+      BOW_WEAPONS.has(definition.id),
+    );
+    const frameSet = this.getViewmodelFrameSet(definition);
+    const frames = frameSet[resolvedState] ?? frameSet.idle;
+    const resolvedIndex = Math.min(
+      frames.length - 1,
+      Math.max(0, Math.floor(Number(frameIndex) || 0)),
+    );
+    const frame = frames[resolvedIndex];
+    if (frame.key === this.viewmodelFrameKey) return;
+    this.viewmodelFrameKey = frame.key;
     this.viewmodelSprite.dataset.state = resolvedState;
-    this.viewmodelSprite.style.backgroundImage =
-      `url('/assets/larp/viewmodels/${definition.asset}-${resolvedState}.webp')`;
+    this.viewmodelSprite.dataset.frame = String(frame.frameNumber);
+    const url = this.viewmodelResolvedUrls.get(frame.key) ?? frame.url;
+    this.viewmodelSprite.style.backgroundImage = `url('${url}')`;
+  }
+
+  resetViewmodelAnimation() {
+    this.viewmodelAnimation.play('idle', { restart: true });
+    this.setViewmodelFrame('idle', 0);
+  }
+
+  playViewmodelFireAnimation() {
+    this.viewmodelAnimation.restartFire(this.definition.interval);
+    this.setViewmodelFrame('fire', 0);
+  }
+
+  setViewmodelAnimationProgress(state, progress) {
+    const definition = this.definition ?? WEAPONS.knives;
+    const resolvedState = normalizeViewmodelState(
+      state,
+      BOW_WEAPONS.has(definition.id),
+    );
+    const frameIndex = this.viewmodelAnimation.setProgress(resolvedState, progress);
+    this.setViewmodelFrame(resolvedState, frameIndex);
+    return this.viewmodelAnimation.state;
+  }
+
+  updateViewmodelAnimation(delta) {
+    if (this.reloading) {
+      const progress = 1 - this.reloadRemaining / Math.max(0.001, this.reloadDuration);
+      return this.setViewmodelAnimationProgress('reload', progress);
+    }
+
+    if (
+      this.shotFrameTime > 0
+      || (this.viewmodelAnimation.state === 'fire' && !this.viewmodelAnimation.finished)
+    ) {
+      if (this.viewmodelAnimation.state !== 'fire') {
+        this.viewmodelAnimation.restartFire(this.definition.interval);
+      }
+      this.viewmodelAnimation.update(delta);
+      this.setViewmodelFrame('fire', this.viewmodelAnimation.frameIndex);
+      return this.viewmodelAnimation.state;
+    }
+
+    if (BOW_WEAPONS.has(this.weaponType) && this.bowDrawTime > 0) {
+      return this.setViewmodelAnimationProgress(
+        'draw',
+        this.bowDrawTime / BOW_FULL_DRAW,
+      );
+    }
+
+    this.viewmodelAnimation.play('idle');
+    this.setViewmodelFrame('idle', 0);
+    return this.viewmodelAnimation.state;
   }
 
   setWeaponModel(type, animate = true) {
     const definition = WEAPONS[type] ?? WEAPONS.knives;
+    const frameSet = this.getViewmodelFrameSet(definition);
+    this.viewmodelAnimation.frameCounts = Object.fromEntries(
+      Object.entries(frameSet).map(([state, frames]) => [state, frames.length]),
+    );
     if (this.viewmodelSprite) {
       this.viewmodelSprite.dataset.weapon = definition.id;
       this.viewmodelFrameKey = '';
-      this.setViewmodelFrame('idle');
+      this.resetViewmodelAnimation();
     }
     if (animate) this.inspect = 1;
   }
@@ -246,21 +344,24 @@ export class PlayerController {
     return (
       !this.dead &&
       !this.reloading &&
-      this.ammo > 0 &&
+      (this.definition.usesAmmo === false || this.ammo > 0) &&
       time - this.lastShotAt >= this.definition.interval
     );
   }
 
   registerShot(time) {
     this.lastShotAt = time;
-    this.ammo = Math.max(0, this.ammo - 1);
     const definition = this.definition;
+    if (definition.usesAmmo !== false) {
+      this.ammo = Math.max(0, this.ammo - 1);
+    }
     const groundedScale = this.grounded ? 1 : 1.12;
     this.recoil += definition.recoil * groundedScale;
     this.recoilSide += (Math.random() - 0.5) * definition.recoil * 0.44;
     this.weaponKick = Math.min(2.5, this.weaponKick + definition.recoil);
     this.shotFrameTime = 0.12;
     this.bowDrawTime = 0;
+    this.playViewmodelFireAnimation();
     this.pitch = clamp(this.pitch + definition.recoil * 0.0062, -1.49, 1.49);
     this.shake = Math.max(this.shake, definition.recoil * 0.075);
     this.shakeTime = 0.11;
@@ -280,6 +381,7 @@ export class PlayerController {
     if (
       this.dead ||
       this.reloading ||
+      definition.usesAmmo === false ||
       this.ammo >= definition.ammo ||
       this.reserve <= 0
     ) {
@@ -291,6 +393,7 @@ export class PlayerController {
     this.reloadRemaining = this.reloadDuration;
     this.reloadServerControlled = serverControlled;
     this.focused = false;
+    this.setViewmodelAnimationProgress('reload', 0);
     this.audio.tone({
       frequency: 180,
       endFrequency: 115,
@@ -315,6 +418,7 @@ export class PlayerController {
     this.reloadRemaining = 0;
     this.reloadServerControlled = false;
     this.bowDrawTime = 0;
+    this.resetViewmodelAnimation();
     this.audio.tone({
       frequency: 260,
       endFrequency: 420,
@@ -329,6 +433,7 @@ export class PlayerController {
     this.reloadRemaining = 0;
     this.reloadServerControlled = false;
     this.bowDrawTime = 0;
+    this.resetViewmodelAnimation();
   }
 
   getAim(originTarget = new THREE.Vector3(), directionTarget = new THREE.Vector3()) {
@@ -628,29 +733,25 @@ export class PlayerController {
       let actionY = 0;
       let actionRotate = 0;
       let actionScale = 1;
-      let frame = 'idle';
+      const frame = this.updateViewmodelAnimation(delta);
       if (this.reloading) {
-        frame = 'reload';
         const progress = 1 - this.reloadRemaining / Math.max(0.001, this.reloadDuration);
         const arc = Math.sin(progress * Math.PI);
         actionX = arc * -34;
         actionY = arc * 64;
         actionRotate = arc * weaponMotion.reloadRotate;
       } else if (this.shotFrameTime > 0) {
-        frame = 'fire';
         const attack = clamp(this.shotFrameTime / 0.12, 0, 1);
         actionX = attack * weaponMotion.fireX;
         actionY = attack * weaponMotion.fireY;
         actionRotate = attack * weaponMotion.fireRotate;
         actionScale = 1 + attack * (this.weaponType === 'fireball' || this.weaponType === 'ember' ? 0.055 : 0.018);
       } else if (BOW_WEAPONS.has(this.weaponType) && this.bowDrawTime > 0) {
-        frame = 'draw';
         const draw = clamp(this.bowDrawTime / BOW_FULL_DRAW, 0, 1);
         actionX = -12 * draw;
         actionY = 5 * draw;
         actionScale = 1 + draw * 0.012;
       }
-      this.setViewmodelFrame(frame);
       this.viewmodelSprite.classList.toggle('is-firing', this.shotFrameTime > 0);
       this.viewmodelSprite.classList.toggle('is-reloading', this.reloading);
       this.viewmodelSprite.classList.toggle('is-drawing', frame === 'draw');

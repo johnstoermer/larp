@@ -112,7 +112,9 @@ export class RemotePlayer {
     WISH.y = 0;
     const aiming = !second.state.dead;
     this.controller.animate(delta, WISH, aiming);
-    this.controller.root.visible = !second.state.dead;
+    // Death is a photographic presentation state, not a reason to remove the
+    // opponent. The authoritative dead flag still controls every interaction.
+    this.controller.root.visible = true;
     this.lastPosition.copy(POSITION);
     this.velocity.copy(VELOCITY);
   }
@@ -120,15 +122,18 @@ export class RemotePlayer {
   applyImmediate(state) {
     if (!state) return;
     if (!this.visible) this.reset(state.position, state.yaw, state.weapon);
+    const tookHit = state.health < this.controller.health;
     this.controller.health = state.health;
     this.controller.dead = state.dead;
+    if (tookHit) this.controller.flashHit = Math.max(this.controller.flashHit, 0.1);
     this.controller.ammo = state.ammo;
     this.controller.reserve = state.reserve ?? this.controller.reserve;
     this.controller.reloading = Boolean(state.reloading);
     if (this.controller.weaponType !== state.weapon) {
       this.controller.equip(state.weapon);
     }
-    if (state.dead) this.controller.root.visible = false;
+    this.controller.updateFighterState();
+    this.controller.root.visible = true;
   }
 
   reconcileVisual(delta) {

@@ -7,7 +7,7 @@ export const WEAPONS = Object.freeze({
     id: 'knives', asset: 'throwing-knives', name: 'THROWING KNIVES', shortName: 'KNIVES',
     ammo: 5, reserve: 20, reloadMs: 900, damage: 28, headMultiplier: 1.55,
     interval: 0.42, spread: 0.02, focusSpread: 0.008, pellets: 1, range: 24,
-    recoil: 0.42, automatic: false, projectile: false, fireMode: 'THROW / STEEL',
+    recoil: 0.42, automatic: false, projectile: false, fireMode: 'THROW / FOAM',
     accent: 0xd6c7a2, casing: 0xd6c7a2, sound: 'knives',
   },
   shortbow: {
@@ -46,10 +46,12 @@ export const WEAPONS = Object.freeze({
     accent: 0xb88d50, casing: 0xb88d50, sound: 'longbow',
   },
   greatsword: {
-    id: 'greatsword', asset: 'greatsword', name: 'STEEL GREATSWORD', shortName: 'GREATSWORD',
-    ammo: 4, reserve: 12, reloadMs: 1250, damage: 78, headMultiplier: 1,
+    id: 'greatsword', asset: 'greatsword', name: 'EVA GREATSWORD', shortName: 'GREATSWORD',
+    ammo: 1, reserve: 0, reloadMs: 0, usesAmmo: false,
+    viewmodelFrames: Object.freeze({ fire: 6, reload: 0 }),
+    damage: 78, headMultiplier: 1,
     interval: 0.82, spread: 0.06, focusSpread: 0.04, pellets: 1, range: 3.55,
-    recoil: 1.18, automatic: false, projectile: false, fireMode: 'SWING / STEEL',
+    recoil: 1.18, automatic: false, projectile: false, fireMode: 'SWING / FOAM',
     accent: 0xd9dde0, casing: 0xd9dde0, sound: 'greatsword',
   },
   fireball: {

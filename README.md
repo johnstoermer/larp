@@ -8,8 +8,10 @@ first-person photographic weapon layer.
 The battlefield is Battle Village, a compact mirrored three-lane map inspired
 by the competitive flow of small two-home arena maps. Red and blue timber
 houses face across a cover-filled center while hedge and tent lanes provide
-fast flanks. The visual presentation combines ordinary stock-photo realism
-with glossy, beveled, skeuomorphic 2010 iPhone-era menus and HUD panels.
+fast flanks. The visual presentation combines awkward direct-flash 2010 phone
+photography—ordinary heavier hobbyists, thick glasses, thrift-store costumes,
+and homemade foam/cardboard props—with glossy, beveled, skeuomorphic menus and
+HUD panels from the same era.
 
 ## Play modes
 
@@ -30,14 +32,21 @@ Win two takes to claim a round and four rounds to win the match.
 - Oaken crossbow
 - Storm wand
 - Yew longbow
-- Steel greatsword
+- EVA-foam greatsword
 - Fireball tome
 
-Every weapon has separate first-person idle, firing, and reload images. Both
-bows also have individual draw images: hold the left mouse button to draw and
-release it to loose the arrow. Each weapon has a distinct forward-facing
-third-person fighter photograph. Arrows, bolts, and knives use individual
-photographic plane meshes aligned with their travel direction in 3D space.
+Every ranged weapon has one first-person idle image plus three-frame stepped
+firing and reload sequences. Both bows also have three draw frames: hold the
+left mouse button to draw and release it to loose the arrow. The greatsword is
+a true ammo-free melee weapon with a dedicated six-frame windup, broad swing,
+impact, follow-through, and recovery sequence; it never reloads. Each weapon
+also has idle, walk, attack, hit, and non-graphic death photographs for its
+ordinary costumed LARPer.
+
+The instant a shot enters the world, the corresponding first- and third-person
+attack cutouts contain no detached projectile. Arrows, bolts, knives, and the
+fireball therefore appear exactly once as world-space effects, never doubled
+inside the photographic player layer.
 
 ## Controls
 
@@ -73,16 +82,12 @@ npm install
 npm run dev
 ```
 
-Run the unit, build, browser, multiplayer, performance, and load checks:
+Run the complete unit, asset-integrity, build, browser, multiplayer,
+performance, load, and visual-review suite. The command starts and stops its
+own production server:
 
 ```sh
-npm test
-npm run build
-npm run test:browser
-npm run test:multiplayer
-npm run test:performance
-npm run test:load
-npm run visual:review
+npm run qa:all
 ```
 
 Serve the production build on port 8080:

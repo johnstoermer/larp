@@ -11,15 +11,17 @@
     "start": "node server/index.js",
     "preview": "npm run build && npm run start",
     "test": "node --test",
+    "test:assets": "node qa/asset-integrity.mjs",
     "test:browser": "node qa/smoke.mjs",
     "test:multiplayer": "node qa/multiplayer-smoke.mjs",
     "test:performance": "node qa/performance.mjs",
     "test:load": "node qa/network-load.mjs",
     "test:portal": "node qa/portal-smoke.mjs",
     "visual:review": "node qa/visual-review.mjs",
-    "qa:all": "npm test && npm run build && npm run test:browser && npm run test:multiplayer && npm run test:performance && npm run test:load && npm run visual:review"
+    "qa:all": "npm test && npm run test:assets && npm run build && node qa/run-server-suite.mjs"
   },
   "dependencies": {
+    "98.css": "0.1.21",
     "express": "^5.2.1",
     "three": "^0.185.1",
     "ws": "^8.21.1"

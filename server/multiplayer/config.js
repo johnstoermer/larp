@@ -48,7 +48,8 @@ export const WEAPONS = Object.freeze({
     range: 126, projectile: false,
   },
   greatsword: {
-    ammo: 4, reserve: 12, reloadMs: 1250, damage: 78, headMultiplier: 1,
+    ammo: 1, reserve: 0, reloadMs: 0, usesAmmo: false,
+    damage: 78, headMultiplier: 1,
     interval: 0.82, spread: 0.06, focusSpread: 0.04, pellets: 1,
     range: 3.55, projectile: false,
   },

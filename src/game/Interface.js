@@ -263,14 +263,17 @@ export class Interface {
     if (this.weaponName.textContent !== player.definition.name) {
       this.weaponName.textContent = player.definition.name;
     }
-    const ammo = String(player.ammo).padStart(2, '0');
+    const usesAmmo = player.definition.usesAmmo !== false;
+    const ammo = usesAmmo ? String(player.ammo).padStart(2, '0') : '—';
     if (this.ammoValue.textContent !== ammo) this.ammoValue.textContent = ammo;
-    const reserve = ` / ${String(player.reserve ?? 0).padStart(2, '0')}`;
+    const reserve = usesAmmo
+      ? ` / ${String(player.reserve ?? 0).padStart(2, '0')}`
+      : '';
     if (this.ammoReserve.textContent !== reserve) this.ammoReserve.textContent = reserve;
     if (this.fireMode.textContent !== player.definition.fireMode) {
       this.fireMode.textContent = player.definition.fireMode;
     }
-    this.crosshair.classList.toggle('empty', player.ammo <= 0);
+    this.crosshair.classList.toggle('empty', usesAmmo && player.ammo <= 0);
     this.crosshair.classList.toggle('focused', player.focused);
 
     let movementLabel = 'READY';
@@ -288,7 +291,7 @@ export class Interface {
     } else if (player.reloading) {
       movementLabel = 'READYING';
       hot = true;
-    } else if (player.ammo <= 0) {
+    } else if (usesAmmo && player.ammo <= 0) {
       movementLabel = player.reserve > 0 ? 'R TO READY' : 'FIND A RELIC';
       hot = true;
     }

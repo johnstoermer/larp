@@ -1,15 +1,14 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { chromium } from 'playwright';
+import { launchChromium } from './browser.mjs';
 
 const baseUrl = process.env.LARP_URL || 'http://127.0.0.1:8080';
 const output = new URL('../artifacts/', import.meta.url);
 await mkdir(output, { recursive: true });
 
-const browser = await chromium.launch({
-  headless: true,
-  executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-  args: ['--enable-webgl', '--ignore-gpu-blocklist'],
-});
+// Performance sampling must exercise the browser's normal GPU path. Other
+// smoke tests deliberately force SwiftShader for CI portability, but doing so
+// here measures software-rasterizer throttling instead of the game.
+const browser = await launchChromium({ forceSoftwareWebgl: false });
 
 async function sampleFrames(page, frameCount) {
   return page.evaluate(
@@ -83,8 +82,18 @@ try {
 
   const state = await page.evaluate(() => {
     const game = window.__LARP_GAME__;
+    const context = game.rendering.renderer.getContext();
+    const rendererInfo = context.getExtension('WEBGL_debug_renderer_info');
     return {
       renderer: game.rendering.getPerformanceState(),
+      graphics: {
+        vendor: context.getParameter(
+          rendererInfo?.UNMASKED_VENDOR_WEBGL ?? context.VENDOR,
+        ),
+        renderer: context.getParameter(
+          rendererInfo?.UNMASKED_RENDERER_WEBGL ?? context.RENDERER,
+        ),
+      },
       canvas: {
         width: game.canvas.width,
         height: game.canvas.height,
@@ -114,14 +123,36 @@ try {
     renderer.setQualityProfile('auto');
     return degraded;
   });
-  const report = { baseUrl, baseline, effectsLoad, state, adaptiveProbe, errors };
+  const softwareRenderer = /swiftshader|llvmpipe|software/i.test(
+    `${state.graphics.vendor} ${state.graphics.renderer}`,
+  );
+  const performanceGate = {
+    enforced: !softwareRenderer,
+    thresholdMs: 25,
+    reason: softwareRenderer
+      ? 'Frame-time assertion skipped for a detected software WebGL renderer.'
+      : 'Frame-time assertion measured on the browser hardware GPU path.',
+  };
+  const report = {
+    baseUrl,
+    baseline,
+    effectsLoad,
+    state,
+    adaptiveProbe,
+    performanceGate,
+    errors,
+  };
   await writeFile(
     new URL('performance-report.json', output),
     JSON.stringify(report, null, 2),
   );
   console.log(JSON.stringify(report, null, 2));
 
-  if (baseline.p95 > 25 || effectsLoad.p95 > 25) {
+  if (
+    performanceGate.enforced &&
+    (baseline.p95 > performanceGate.thresholdMs ||
+      effectsLoad.p95 > performanceGate.thresholdMs)
+  ) {
     throw new Error('Frame-time budget exceeded 25 ms at the 95th percentile.');
   }
   if (state.canvas.width > 1920 * 1.25 || state.canvas.height > 1080 * 1.25) {

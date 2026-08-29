@@ -39,6 +39,7 @@ test('authoritative weapon values stay aligned with client presentation', () => 
     'ammo',
     'reserve',
     'reloadMs',
+    'usesAmmo',
     'damage',
     'headMultiplier',
     'interval',
@@ -60,6 +61,41 @@ test('authoritative weapon values stay aligned with client presentation', () => 
       );
     }
   }
+});
+
+test('greatsword swings never consume ammo and cannot reload', () => {
+  const first = createSession('FIRST');
+  const second = createSession('SECOND');
+  const room = new Room({ sessions: [first, second], rules: fastRules, now: 2000 });
+  room.phase = 'playing';
+  const player = room.players[0];
+  player.weapon = 'greatsword';
+  player.ammo = SERVER_WEAPONS.greatsword.ammo;
+  player.reserve = SERVER_WEAPONS.greatsword.reserve;
+
+  const shot = (shotId, now) => room.handleShot(first, {
+    shotId,
+    yaw: player.yaw,
+    pitch: player.pitch,
+    direction: directionFromAngles(player.yaw, player.pitch),
+  }, now);
+
+  shot(1, 2100);
+  shot(2, 3000);
+  room.handleReload(first, 3100);
+
+  assert.equal(player.lastShotId, 2);
+  assert.equal(player.ammo, 1);
+  assert.equal(player.reserve, 0);
+  assert.equal(player.reloadEndsAt, Infinity);
+  assert.equal(
+    first.messages.filter((message) => message.event === 'shot').length,
+    2,
+  );
+  assert.equal(
+    first.messages.some((message) => message.event === 'reload_start'),
+    false,
+  );
 });
 
 test('reload timing and ammunition transfer stay server authoritative', () => {

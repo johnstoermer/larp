@@ -437,7 +437,11 @@ export class Room {
       return;
     }
     const definition = WEAPONS[shooter.weapon];
-    if (!definition || shooter.ammo <= 0 || Number.isFinite(shooter.reloadEndsAt)) return;
+    if (
+      !definition ||
+      (definition.usesAmmo !== false && shooter.ammo <= 0) ||
+      Number.isFinite(shooter.reloadEndsAt)
+    ) return;
     if (now - shooter.lastShotAt < definition.interval * 880) return;
 
     const shotId = Number(message.shotId);
@@ -459,7 +463,9 @@ export class Room {
     shooter.pitch = pitch;
     shooter.lastShotId = shotId;
     shooter.lastShotAt = now;
-    shooter.ammo = Math.max(0, shooter.ammo - 1);
+    if (definition.usesAmmo !== false) {
+      shooter.ammo = Math.max(0, shooter.ammo - 1);
+    }
     const eyeHeight = shooter.sliding ? 0.92 : 1.61;
     const origin = [
       shooter.position[0],
@@ -639,6 +645,7 @@ export class Room {
     const definition = WEAPONS[player.weapon];
     if (
       !definition ||
+      definition.usesAmmo === false ||
       Number.isFinite(player.reloadEndsAt) ||
       player.ammo >= definition.ammo ||
       player.reserve <= 0

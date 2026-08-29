@@ -492,7 +492,7 @@ export class Game {
     this.player.dead = local.dead;
     this.remote.reset(remote.position, remote.yaw, remote.weapon);
     this.remote.applyImmediate(remote);
-    this.bot.root.visible = !remote.dead;
+    this.bot.root.visible = true;
     this.player.viewRoot.visible = !local.dead;
     this.onlineRoundLoaded = state.roundNumber;
     this.onlineMapLoaded = state.mapIndex;
@@ -849,7 +849,11 @@ export class Game {
         this.damagePlayer(this.player.health - health, this.bot.position, false);
       }
       this.player.health = health;
-      this.bot.health = message.health[this.onlineSlot === 0 ? 1 : 0];
+      const opponentHealth = message.health[this.onlineSlot === 0 ? 1 : 0];
+      if (opponentHealth < this.bot.health) this.bot.flashHit = 0.1;
+      this.bot.health = opponentHealth;
+      if (opponentHealth <= 0) this.bot.dead = true;
+      this.bot.updateFighterState();
     } else if (message.event === 'opponent_disconnected') {
       const localDrop = message.player === this.onlineSlot;
       this.ui.showConnectionOverlay(
@@ -886,7 +890,9 @@ export class Game {
           );
         }
         this.bot.health = message.targetHealth;
+        this.bot.flashHit = 0.1;
         if (message.targetHealth <= 0) this.bot.dead = true;
+        this.bot.updateFighterState();
       }
       return;
     }
@@ -999,6 +1005,9 @@ export class Game {
         this.player.velocity.add(new THREE.Vector3().fromArray(entry.impulse));
       } else {
         this.bot.health = entry.health;
+        this.bot.flashHit = Math.max(this.bot.flashHit, 0.1);
+        if (entry.health <= 0) this.bot.dead = true;
+        this.bot.updateFighterState();
         this.bot.velocity.add(new THREE.Vector3().fromArray(entry.impulse));
         if (message.owner === this.onlineSlot) {
           this.ui.showHit(false, this.elapsed);
