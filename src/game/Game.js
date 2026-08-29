@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { CHARACTER_HITBOX } from '../../shared/characterHitbox.js';
 import { GameRenderer } from './Renderer.js';
 import { Arena } from './Arena.js';
 import { AudioSystem } from './AudioSystem.js';
@@ -854,6 +855,7 @@ export class Game {
       this.bot.health = opponentHealth;
       if (opponentHealth <= 0) this.bot.dead = true;
       this.bot.updateFighterState();
+      this.bot.updateHealthBar();
     } else if (message.event === 'opponent_disconnected') {
       const localDrop = message.player === this.onlineSlot;
       this.ui.showConnectionOverlay(
@@ -882,6 +884,13 @@ export class Game {
       if (message.hit) {
         this.ui.showHit(message.headshot, this.elapsed);
         this.audio.impact(true, message.headshot);
+        const damagePosition = message.hitPoint
+          ? new THREE.Vector3().fromArray(message.hitPoint)
+          : this.bot.getHeadCenter(new THREE.Vector3());
+        damagePosition.y += 0.28;
+        this.vfx.spawnDamageNumber(damagePosition, message.damage, {
+          headshot: message.headshot,
+        });
         if (message.hitPoint) {
           this.vfx.spawnBloodImpact(
             new THREE.Vector3().fromArray(message.hitPoint),
@@ -893,6 +902,7 @@ export class Game {
         this.bot.flashHit = 0.1;
         if (message.targetHealth <= 0) this.bot.dead = true;
         this.bot.updateFighterState();
+        this.bot.updateHealthBar();
       }
       return;
     }
@@ -1008,10 +1018,15 @@ export class Game {
         this.bot.flashHit = Math.max(this.bot.flashHit, 0.1);
         if (entry.health <= 0) this.bot.dead = true;
         this.bot.updateFighterState();
+        this.bot.updateHealthBar();
         this.bot.velocity.add(new THREE.Vector3().fromArray(entry.impulse));
         if (message.owner === this.onlineSlot) {
           this.ui.showHit(false, this.elapsed);
           this.audio.impact(true, false);
+          this.vfx.spawnDamageNumber(
+            this.bot.getHeadCenter(new THREE.Vector3()).add(new THREE.Vector3(0, 0.28, 0)),
+            entry.amount,
+          );
         }
       }
     }
@@ -1046,10 +1061,7 @@ export class Game {
       !this.player.dead;
     this.lastMovement = this.player.update(delta, canMove);
     this.remote.update(delta);
-    if (this.lastMovement.reload && canMove && this.player.startReload(true)) {
-      this.network.send({ type: 'reload' });
-      this.ui.showPickup('RELOADING', this.elapsed);
-    }
+    if (this.lastMovement.reload && canMove) this.startPlayerReload(true);
 
     if (canMove) {
       const pickup = this.pickups.findPlayerContact(this.player.position);
@@ -1171,9 +1183,7 @@ export class Game {
     }
 
     this.lastMovement = this.player.update(delta, true);
-    if (this.lastMovement.reload && this.player.startReload(false)) {
-      this.ui.showPickup('RELOADING', this.elapsed);
-    }
+    if (this.lastMovement.reload) this.startPlayerReload(false);
 
     const botAction = this.bot.update(
       delta,
@@ -1231,10 +1241,29 @@ export class Game {
     this.resolveDeaths();
   }
 
+  startPlayerReload(serverControlled) {
+    if (!this.player.startReload(serverControlled)) return false;
+    if (serverControlled) this.network.send({ type: 'reload' });
+    this.ui.showPickup('RELOADING', this.elapsed);
+    return true;
+  }
+
+  handleEmptyWeapon(serverControlled) {
+    if (
+      this.player.definition.usesAmmo === false ||
+      this.player.ammo > 0
+    ) {
+      return false;
+    }
+    if (this.player.reloading || this.startPlayerReload(serverControlled)) return true;
+    this.player.dryFire(this.elapsed);
+    return true;
+  }
+
   firePlayerWeapon() {
     const definition = this.player.definition;
     if (!this.player.canFire(this.elapsed)) {
-      if (this.player.ammo <= 0) this.player.dryFire(this.elapsed);
+      this.handleEmptyWeapon(false);
       return;
     }
 
@@ -1256,6 +1285,7 @@ export class Game {
     } else {
       let anyHit = false;
       let headshot = false;
+      let totalDamage = 0;
       for (let pellet = 0; pellet < definition.pellets; pellet += 1) {
         const spread = this.player.focused
           ? definition.focusSpread
@@ -1274,7 +1304,7 @@ export class Game {
             definition.damage *
             falloff *
             (result.headshot ? definition.headMultiplier : 1);
-          this.bot.damage(damage);
+          totalDamage += this.bot.damage(damage);
           anyHit = true;
           headshot ||= result.headshot;
           this.vfx.spawnBloodImpact(
@@ -1293,7 +1323,14 @@ export class Game {
         }
         showWeaponTrail(this.vfx, muzzle, end, definition, pellet);
       }
-      if (anyHit) this.ui.showHit(headshot, this.elapsed);
+      if (anyHit) {
+        this.ui.showHit(headshot, this.elapsed);
+        this.vfx.spawnDamageNumber(
+          this.bot.getHeadCenter(new THREE.Vector3()).add(new THREE.Vector3(0, 0.28, 0)),
+          totalDamage,
+          { headshot },
+        );
+      }
     }
 
     if (definition.id === 'lightning' || definition.id === 'ember' || definition.id === 'greatsword') this.ui.flash();
@@ -1302,7 +1339,7 @@ export class Game {
   fireOnlineWeapon() {
     const definition = this.player.definition;
     if (!this.player.canFire(this.elapsed)) {
-      if (this.player.ammo <= 0) this.player.dryFire(this.elapsed);
+      this.handleEmptyWeapon(true);
       return;
     }
 
@@ -1408,8 +1445,18 @@ export class Game {
     if (!this.bot.dead) {
       const headCenter = this.bot.getHeadCenter(new THREE.Vector3());
       const bodyCenter = this.bot.getBodyCenter(new THREE.Vector3());
-      const headDistance = raySphereDistance(origin, direction, headCenter, 0.34);
-      const bodyDistance = raySphereDistance(origin, direction, bodyCenter, 0.58);
+      const headDistance = raySphereDistance(
+        origin,
+        direction,
+        headCenter,
+        CHARACTER_HITBOX.head.radius,
+      );
+      const bodyDistance = raySphereDistance(
+        origin,
+        direction,
+        bodyCenter,
+        CHARACTER_HITBOX.body.radius,
+      );
       let distance = null;
       let headshot = false;
       if (headDistance != null && headDistance < worldDistance) {
@@ -1691,7 +1738,9 @@ export class Game {
       if (clear || botDistance < 1.6) {
         const falloff = 1 - clamp(botDistance / radius, 0, 1);
         const ownerScale = projectile.owner === 'bot' ? 0.5 : 1;
-        this.bot.damage(projectile.definition.damage * falloff * ownerScale);
+        const appliedDamage = this.bot.damage(
+          projectile.definition.damage * falloff * ownerScale,
+        );
         const impulse = botCenter
           .clone()
           .sub(position)
@@ -1702,6 +1751,10 @@ export class Game {
         if (projectile.owner === 'player') {
           this.ui.showHit(false, this.elapsed);
           this.audio.impact(true, false);
+          this.vfx.spawnDamageNumber(
+            this.bot.getHeadCenter(new THREE.Vector3()).add(new THREE.Vector3(0, 0.28, 0)),
+            appliedDamage,
+          );
         }
       }
     }

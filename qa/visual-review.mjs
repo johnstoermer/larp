@@ -12,10 +12,11 @@ const viewports = Object.freeze({
   // first-person framing and HUD clipping instead of only that notice.
   narrow: { width: 720, height: 900 },
 });
-const expectedCanonicalFrameCount = 62;
+const expectedCanonicalFrameCount = 56;
 const fighterStates = Object.freeze(['idle', 'walk', 'attack', 'hit', 'death']);
 const expectedFighterStateCount = 8 * fighterStates.length;
 const runtimeSafetyGutterRatio = 0.04;
+const round = (value) => Math.round(value * 100) / 100;
 for (const name of Object.keys(viewports)) {
   await mkdir(new URL(`${name}/`, output), { recursive: true });
 }
@@ -166,6 +167,7 @@ for (const viewportName of Object.keys(viewports)) {
       for (const [weapon, frameSet] of player.viewmodelFrameSets.entries()) {
         for (const [state, frames] of Object.entries(frameSet)) {
           for (const frame of frames) {
+            const progress = (frame.frameNumber - 0.5) / frames.length;
             player.position.set(-8.5, 0, 8);
             player.velocity.set(0, 0, 0);
             player.yaw = -0.55;
@@ -178,15 +180,12 @@ for (const viewportName of Object.keys(viewports)) {
             player.weaponKick = 0;
             player.equip(weapon, false);
             player.shotFrameTime = state === 'fire' ? 0.1 : 0;
-            player.bowDrawTime = state === 'draw' ? 0.7 : 0;
+            player.bowDrawTime = state === 'draw' ? 0.72 * progress : 0;
             player.reloading = state === 'reload';
             player.reloadDuration = state === 'reload' ? 1 : 0;
-            player.reloadRemaining = state === 'reload' ? 0.5 : 0;
+            player.reloadRemaining = state === 'reload' ? 1 - progress : 0;
+            player.setViewmodelAnimationProgress(state, progress);
             player.updateView(0, movement);
-            player.setViewmodelAnimationProgress(
-              state,
-              (frame.frameNumber - 0.5) / frames.length,
-            );
 
             const image = player.viewmodelFrames.get(frame.key);
             const style = getComputedStyle(sprite);
@@ -311,6 +310,9 @@ for (const viewportName of Object.keys(viewports)) {
               // Forearms may intentionally leave through the bottom edge.
               bottom: round(innerHeight - bounds.bottom),
             } : null;
+            const visibleHeight = bounds
+              ? Math.max(0, Math.min(innerHeight, bounds.bottom) - Math.max(0, bounds.top))
+              : 0;
             const requiredMargins = {
               top: round(innerHeight * safetyGutterRatio),
               left: round(innerWidth * safetyGutterRatio),
@@ -328,6 +330,8 @@ for (const viewportName of Object.keys(viewports)) {
               opaquePixels,
               bounds,
               margins,
+              visibleHeight: round(visibleHeight),
+              visibleHeightRatio: visibleHeight / innerHeight,
               marginRatios: margins ? {
                 top: minimumY / innerHeight,
                 left: minimumX / innerWidth,
@@ -383,6 +387,18 @@ const minimumRuntimeViewmodelMargins = Object.fromEntries(
     } : null];
   }),
 );
+const maximumRuntimeViewmodelBottomGap = runtimeViewmodelFrames.reduce(
+  (current, entry) => !current || entry.margins?.bottom > current.margins?.bottom
+    ? entry
+    : current,
+  null,
+);
+const minimumRuntimeViewmodelVisibleHeight = runtimeViewmodelFrames.reduce(
+  (current, entry) => !current || entry.visibleHeightRatio < current.visibleHeightRatio
+    ? entry
+    : current,
+  null,
+);
 
 const mapShots = [
   { name: 'arena-spawn', position: [0, 0, 16], yaw: 0, weapon: 'knives', state: 'idle' },
@@ -391,11 +407,11 @@ const mapShots = [
 
 const weaponShots = [
   ['knives', ['idle', 'fire', 'reload']],
-  ['shortbow', ['idle', 'draw', 'fire', 'reload']],
+  ['shortbow', ['idle', 'draw', 'fire']],
   ['ember', ['idle', 'fire', 'reload']],
   ['crossbow', ['idle', 'fire', 'reload']],
   ['lightning', ['idle', 'fire', 'reload']],
-  ['longbow', ['idle', 'draw', 'fire', 'reload']],
+  ['longbow', ['idle', 'draw', 'fire']],
   ['greatsword', ['idle', 'fire']],
   ['fireball', ['idle', 'fire', 'reload']],
 ].flatMap(([weapon, states]) => states.map((state) => ({
@@ -619,7 +635,40 @@ const runtimeViewmodelGutterFailures = runtimeViewmodelFrames.filter((entry) =>
   ['top', 'left', 'right'].some((edge) =>
     !Number.isFinite(entry.marginRatios[edge]) ||
     entry.marginRatios[edge] < runtimeSafetyGutterRatio
-  )
+  ) ||
+  !Number.isFinite(entry.margins.bottom) ||
+  entry.margins.bottom > 1 ||
+  !Number.isFinite(entry.visibleHeightRatio) ||
+  entry.visibleHeightRatio < 0.12
+);
+const greatswordSweepReport = Object.fromEntries(
+  Object.keys(viewports).map((viewport) => {
+    const frames = runtimeViewmodelFrames
+      .filter((entry) =>
+        entry.viewport === viewport &&
+        entry.weapon === 'greatsword' &&
+        entry.state === 'fire')
+      .sort((left, right) => left.frame - right.frame)
+      .map((entry) => ({
+        frame: entry.frame,
+        centerX: round((entry.bounds.left + entry.bounds.right) / 2),
+      }));
+    const travel = frames.length
+      ? round(frames.at(-1).centerX - frames[0].centerX)
+      : 0;
+    return [viewport, {
+      frames,
+      travel,
+      travelRatio: travel / viewports[viewport].width,
+    }];
+  }),
+);
+const invalidGreatswordSweeps = Object.entries(greatswordSweepReport).filter(
+  ([, report]) =>
+    report.frames.length !== 6 ||
+    report.travelRatio < 0.15 ||
+    report.frames.some((frame, index) =>
+      index > 0 && frame.centerX <= report.frames[index - 1].centerX),
 );
 if (
   runtimeViewmodelFrames.length !== expectedRuntimeViewmodelCases ||
@@ -632,14 +681,24 @@ if (
     uniqueCases: uniqueRuntimeViewmodelCases.size,
     safetyGutterRatio: runtimeSafetyGutterRatio,
     minimumMargins: minimumRuntimeViewmodelMargins,
+    maximumBottomGap: maximumRuntimeViewmodelBottomGap,
+    minimumVisibleHeight: minimumRuntimeViewmodelVisibleHeight,
     failures: runtimeViewmodelGutterFailures.map((entry) => ({
       case: entry.case,
       bounds: entry.bounds,
       margins: entry.margins,
       marginRatios: entry.marginRatios,
+      visibleHeight: entry.visibleHeight,
+      visibleHeightRatio: entry.visibleHeightRatio,
       requiredMargins: entry.requiredMargins,
     })),
   })}`);
+}
+if (invalidGreatswordSweeps.length) {
+  throw new Error(
+    `Greatsword runtime poses do not form one broad left-to-right sweep: ` +
+    JSON.stringify(greatswordSweepReport),
+  );
 }
 if (edgeReport.some((entry) =>
   !entry.bounds ||
@@ -657,7 +716,7 @@ if (
     entry.renderedWeapon !== entry.weapon ||
     entry.renderedState !== entry.requestedState ||
     !entry.visible ||
-    !entry.textureUrl?.endsWith(entry.expectedAsset) ||
+    new URL(entry.textureUrl).pathname.split('/').at(-1) !== entry.expectedAsset ||
     entry.imageSize.some((size) => size < 1)
   )
 ) {
@@ -667,9 +726,24 @@ if (projectileReport.some((entry) =>
   entry.objectType !== 'Mesh' ||
   entry.geometry !== 'PlaneGeometry' ||
   entry.directionAlignment < 0.999 ||
-  !entry.textureUrl?.endsWith(entry.expectedAsset)
+  new URL(entry.textureUrl).pathname.split('/').at(-1) !== entry.expectedAsset
 )) {
   throw new Error(`Directional photographic projectile failed: ${JSON.stringify(projectileReport)}`);
+}
+const assetRequestReport = await page.evaluate(() =>
+  performance.getEntriesByType('resource')
+    .map((entry) => new URL(entry.name))
+    .filter((url) => url.pathname.startsWith('/assets/larp/'))
+    .map((url) => ({
+      pathname: url.pathname,
+      revision: url.searchParams.get('v'),
+    })),
+);
+const unversionedAssetRequests = assetRequestReport.filter(
+  (entry) => entry.revision !== 'photo-v3-20260829',
+);
+if (unversionedAssetRequests.length) {
+  throw new Error(`Unversioned LARP artwork requests: ${JSON.stringify(unversionedAssetRequests)}`);
 }
 if (errors.length) throw new Error(errors.join('\n'));
 
@@ -682,11 +756,15 @@ await writeFile(
     animationFrames: animationFrameReport,
     runtimeViewmodelFrames,
     minimumRuntimeViewmodelMargins,
+    maximumRuntimeViewmodelBottomGap,
+    minimumRuntimeViewmodelVisibleHeight,
+    greatswordSweepReport,
     representativeAnimationShots,
     edgeReport,
     expectedFighterStateCount,
     fighters: fighterReport,
     projectiles: projectileReport,
+    assetRequestReport,
   }, null, 2),
 );
 console.log(JSON.stringify({
@@ -702,6 +780,9 @@ console.log(JSON.stringify({
     requiredMargins: entry.requiredMargins,
   })),
   minimumRuntimeViewmodelMargins,
+  maximumRuntimeViewmodelBottomGap,
+  minimumRuntimeViewmodelVisibleHeight,
+  greatswordSweepReport,
   minimumViewmodelMargins: edgeReport.reduce(
     (minimums, entry) => ({
       top: Math.min(minimums.top, entry.margins.top),

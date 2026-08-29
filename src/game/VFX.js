@@ -310,6 +310,67 @@ export class VFX {
     });
   }
 
+  spawnDamageNumber(position, amount, options = {}) {
+    if (typeof document === 'undefined' || !Number.isFinite(amount) || amount <= 0) return null;
+    const canvas = document.createElement('canvas');
+    canvas.width = 160;
+    canvas.height = 80;
+    const context = canvas.getContext('2d');
+    if (!context) return null;
+    const value = Math.max(1, Math.round(amount));
+    context.imageSmoothingEnabled = false;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.font = 'bold 38px "Arial Black", Arial, sans-serif';
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.lineJoin = 'miter';
+    context.strokeStyle = '#000000';
+    context.lineWidth = 9;
+    context.strokeText(`-${value}`, 80, 40);
+    context.fillStyle = options.headshot ? '#fff27a' : '#ffffff';
+    context.fillText(`-${value}`, 80, 40);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.magFilter = THREE.NearestFilter;
+    texture.minFilter = THREE.LinearFilter;
+    texture.needsUpdate = true;
+    const material = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const sprite = new THREE.Sprite(material);
+    sprite.name = 'damage-number';
+    sprite.userData.damage = value;
+    sprite.userData.headshot = Boolean(options.headshot);
+    sprite.position.copy(position);
+    sprite.position.x += (Math.random() - 0.5) * 0.18;
+    sprite.scale.set(1.12, 0.56, 1);
+    sprite.renderOrder = 40;
+    this.root.add(sprite);
+    const origin = sprite.position.clone();
+    this.transients.push({
+      object: sprite,
+      age: 0,
+      life: options.headshot ? 0.92 : 0.76,
+      update: (progress) => {
+        sprite.position.copy(origin);
+        sprite.position.y += progress * 0.82;
+        const pop = progress < 0.18 ? 0.82 + progress : 1;
+        sprite.scale.set(1.12 * pop, 0.56 * pop, 1);
+        material.opacity = progress < 0.62 ? 1 : (1 - progress) / 0.38;
+      },
+      dispose: () => {
+        material.dispose();
+        texture.dispose();
+      },
+    });
+    return sprite;
+  }
+
   spawnShell(position, direction, color = 0xc99a43, large = false, kind = 'knives') {
     const effect = kind === 'crossbow'
       ? 'bolt'

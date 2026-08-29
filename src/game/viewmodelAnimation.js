@@ -1,3 +1,5 @@
+import { versionLarpAssetUrl } from './assetUrl.js';
+
 export const VIEWMODEL_FRAME_STEP_MS = 90;
 
 export const VIEWMODEL_FRAME_COUNTS = Object.freeze({
@@ -10,7 +12,7 @@ export const VIEWMODEL_FRAME_COUNTS = Object.freeze({
 const VIEWMODEL_STATES = new Set(Object.keys(VIEWMODEL_FRAME_COUNTS));
 
 function assetUrl(asset, suffix, baseUrl) {
-  return `${baseUrl}/${asset}-${suffix}.webp`;
+  return versionLarpAssetUrl(`${baseUrl}/${asset}-${suffix}.webp`);
 }
 
 function normalizeStepMs(stepMs) {
@@ -51,6 +53,49 @@ export function viewmodelFireStepMs(
 export function viewmodelFrameIndexForProgress(progress, frameCount = 1) {
   const count = normalizeFrameCount(frameCount);
   return Math.min(count - 1, Math.floor(normalizeProgress(progress) * count));
+}
+
+/**
+ * Return the transparent rows beneath the last meaningfully occupied alpha
+ * row. Ignoring isolated antialias specks keeps a sleeve/forearm edge anchored
+ * instead of letting one stray pixel determine the composition.
+ */
+export function substantialAlphaBottomMargin(
+  pixels,
+  width,
+  height,
+  { alphaThreshold = 16, rowCoverage = 0.008 } = {},
+) {
+  const resolvedWidth = Math.max(0, Math.floor(Number(width) || 0));
+  const resolvedHeight = Math.max(0, Math.floor(Number(height) || 0));
+  if (!pixels || resolvedWidth === 0 || resolvedHeight === 0) return 0;
+  const requiredPixels = Math.max(4, Math.ceil(resolvedWidth * rowCoverage));
+
+  for (let y = resolvedHeight - 1; y >= 0; y -= 1) {
+    let visible = 0;
+    const rowStart = y * resolvedWidth * 4;
+    for (let x = 0; x < resolvedWidth; x += 1) {
+      if (pixels[rowStart + x * 4 + 3] >= alphaThreshold) {
+        visible += 1;
+        if (visible >= requiredPixels) return resolvedHeight - 1 - y;
+      }
+    }
+  }
+  return resolvedHeight;
+}
+
+/** Six deliberately stepped screen-space poses for the greatsword's melee arc. */
+export function greatswordSweepForFrame(frameIndex, frameCount = 6) {
+  const count = Math.max(2, normalizeFrameCount(frameCount));
+  const index = Math.min(count - 1, Math.max(0, Math.floor(Number(frameIndex) || 0)));
+  const progress = index / (count - 1);
+  return Object.freeze({
+    progress,
+    x: -96 + progress * 191,
+    y: -Math.sin(progress * Math.PI) * 54,
+    rotate: -13 + progress * 30,
+    scale: 1.015 + Math.sin(progress * Math.PI) * 0.035,
+  });
 }
 
 export function normalizeViewmodelState(state, isBow = false) {

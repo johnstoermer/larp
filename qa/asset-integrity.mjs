@@ -52,7 +52,7 @@ function expectedViewmodels() {
   for (const weapon of WEAPONS) {
     files.push(`${weapon.asset}-idle.webp`);
     const states = weapon.bow
-      ? ['fire', 'reload', 'draw']
+      ? ['fire', 'draw']
       : weapon.melee
         ? ['fire']
         : ['fire', 'reload'];
@@ -417,16 +417,25 @@ try {
         }
       }
 
-      function edgeMaximum(edge) {
+      function edgeStats(edge) {
         let maximum = 0;
+        let visiblePixels = 0;
         if (edge === 'top' || edge === 'bottom') {
           const y = edge === 'top' ? 0 : height - 1;
-          for (let x = 0; x < width; x += 1) maximum = Math.max(maximum, data[(y * width + x) * 4 + 3]);
+          for (let x = 0; x < width; x += 1) {
+            const alpha = data[(y * width + x) * 4 + 3];
+            maximum = Math.max(maximum, alpha);
+            if (alpha > 16) visiblePixels += 1;
+          }
         } else {
           const x = edge === 'left' ? 0 : width - 1;
-          for (let y = 0; y < height; y += 1) maximum = Math.max(maximum, data[(y * width + x) * 4 + 3]);
+          for (let y = 0; y < height; y += 1) {
+            const alpha = data[(y * width + x) * 4 + 3];
+            maximum = Math.max(maximum, alpha);
+            if (alpha > 16) visiblePixels += 1;
+          }
         }
-        return maximum;
+        return { maximum, visiblePixels };
       }
 
       function cornerMaximum(right, bottom) {
@@ -469,10 +478,10 @@ try {
           right: width - 1 - bounds.right,
         } : null,
         edges: {
-          top: { maximum: edgeMaximum('top') },
-          bottom: { maximum: edgeMaximum('bottom') },
-          left: { maximum: edgeMaximum('left') },
-          right: { maximum: edgeMaximum('right') },
+          top: edgeStats('top'),
+          bottom: edgeStats('bottom'),
+          left: edgeStats('left'),
+          right: edgeStats('right'),
         },
         corners: {
           topLeft: cornerMaximum(false, false),
@@ -537,7 +546,7 @@ const report = {
     fighterStateNaming: 'fighters/${asset}-${state}.webp',
     fighterStates: FIGHTER_STATES,
     requiredFighterCutouts: WEAPONS.length * FIGHTER_STATES.length,
-    firstPersonMinimumTopAndSideMargin: '6.25% of the relevant canvas dimension',
+    firstPersonMinimumTopAndSideMargin: '12% of the relevant canvas dimension',
   },
   exemptions: [
     {

@@ -53,6 +53,9 @@ test('lethal damage keeps a readable death cutout visible until reset', () => {
   assert.equal(bot.damage(100), 100);
   assert.equal(bot.dead, true);
   assert.equal(bot.root.visible, true);
+  assert.equal(bot.healthBar.name, 'character-health-bar');
+  assert.equal(bot.healthBar.userData.ratio, 0);
+  assert.equal(bot.healthBarFill.visible, false);
   assert.equal(bot.fighterState, 'death');
   assert.equal(bot.sprite.userData.state, 'death');
   assert.ok(bot.spriteMaterial.map.name !== 'missing');
@@ -65,6 +68,8 @@ test('lethal damage keeps a readable death cutout visible until reset', () => {
   assert.equal(bot.dead, false);
   assert.equal(bot.fighterState, 'idle');
   assert.equal(bot.root.visible, true);
+  assert.equal(bot.healthBar.userData.ratio, 1);
+  assert.equal(bot.healthBarFill.visible, true);
 });
 
 test('remote authoritative hit and death snapshots select poses without hiding', () => {

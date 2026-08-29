@@ -437,11 +437,11 @@ export class Room {
       return;
     }
     const definition = WEAPONS[shooter.weapon];
-    if (
-      !definition ||
-      (definition.usesAmmo !== false && shooter.ammo <= 0) ||
-      Number.isFinite(shooter.reloadEndsAt)
-    ) return;
+    if (!definition || Number.isFinite(shooter.reloadEndsAt)) return;
+    if (definition.usesAmmo !== false && shooter.ammo <= 0) {
+      this.handleReload(session, now);
+      return;
+    }
     if (now - shooter.lastShotAt < definition.interval * 880) return;
 
     const shotId = Number(message.shotId);
@@ -973,11 +973,19 @@ export class Room {
     while (this.snapshotAt <= now) {
       this.snapshotAt += this.snapshotInterval;
     }
-    this.broadcast({
+    const payload = {
       type: 'snapshot',
       roomId: this.id,
       state: this.createSnapshot(now),
-    });
+    };
+    const encoded = JSON.stringify(payload);
+    for (const player of this.players) {
+      if (player?.session?.sendEncoded) {
+        player.session.sendEncoded(encoded, { volatile: true });
+      } else {
+        player?.session?.send(payload);
+      }
+    }
   }
 
   update(now = Date.now()) {

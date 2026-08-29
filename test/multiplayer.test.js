@@ -33,6 +33,7 @@ const fastRules = {
   loadTimeoutMs: 50,
   reconnectMs: 40,
 };
+const DETERMINISTIC_SPREAD_SEED = 0;
 
 test('authoritative weapon values stay aligned with client presentation', () => {
   const fields = [
@@ -63,39 +64,43 @@ test('authoritative weapon values stay aligned with client presentation', () => 
   }
 });
 
-test('greatsword swings never consume ammo and cannot reload', () => {
-  const first = createSession('FIRST');
-  const second = createSession('SECOND');
-  const room = new Room({ sessions: [first, second], rules: fastRules, now: 2000 });
-  room.phase = 'playing';
-  const player = room.players[0];
-  player.weapon = 'greatsword';
-  player.ammo = SERVER_WEAPONS.greatsword.ammo;
-  player.reserve = SERVER_WEAPONS.greatsword.reserve;
+test('greatsword and bows never consume ammo and cannot reload', () => {
+  for (const weapon of ['greatsword', 'shortbow', 'longbow']) {
+    const first = createSession(`FIRST-${weapon}`);
+    const second = createSession(`SECOND-${weapon}`);
+    const room = new Room({ sessions: [first, second], rules: fastRules, now: 2000 });
+    room.phase = 'playing';
+    const player = room.players[0];
+    player.weapon = weapon;
+    player.ammo = SERVER_WEAPONS[weapon].ammo;
+    player.reserve = SERVER_WEAPONS[weapon].reserve;
 
-  const shot = (shotId, now) => room.handleShot(first, {
-    shotId,
-    yaw: player.yaw,
-    pitch: player.pitch,
-    direction: directionFromAngles(player.yaw, player.pitch),
-  }, now);
+    const shot = (shotId, now) => room.handleShot(first, {
+      shotId,
+      yaw: player.yaw,
+      pitch: player.pitch,
+      direction: directionFromAngles(player.yaw, player.pitch),
+    }, now);
 
-  shot(1, 2100);
-  shot(2, 3000);
-  room.handleReload(first, 3100);
+    shot(1, 2100);
+    shot(2, 3000);
+    room.handleReload(first, 3100);
 
-  assert.equal(player.lastShotId, 2);
-  assert.equal(player.ammo, 1);
-  assert.equal(player.reserve, 0);
-  assert.equal(player.reloadEndsAt, Infinity);
-  assert.equal(
-    first.messages.filter((message) => message.event === 'shot').length,
-    2,
-  );
-  assert.equal(
-    first.messages.some((message) => message.event === 'reload_start'),
-    false,
-  );
+    assert.equal(player.lastShotId, 2, weapon);
+    assert.equal(player.ammo, 1, weapon);
+    assert.equal(player.reserve, 0, weapon);
+    assert.equal(player.reloadEndsAt, Infinity, weapon);
+    assert.equal(
+      first.messages.filter((message) => message.event === 'shot').length,
+      2,
+      weapon,
+    );
+    assert.equal(
+      first.messages.some((message) => message.event === 'reload_start'),
+      false,
+      weapon,
+    );
+  }
 });
 
 test('reload timing and ammunition transfer stay server authoritative', () => {
@@ -135,6 +140,45 @@ test('reload timing and ammunition transfer stay server authoritative', () => {
   assert.ok(first.messages.some(
     (message) => message.type === 'event' && message.event === 'reload_complete',
   ));
+});
+
+test('an authoritative shot request with an empty weapon starts reload', () => {
+  const first = createSession('FIRST');
+  const second = createSession('SECOND');
+  const room = new Room({ sessions: [first, second], rules: fastRules, now: 1500 });
+  room.phase = 'playing';
+  const player = room.players[0];
+  const definition = SERVER_WEAPONS.crossbow;
+  player.weapon = 'crossbow';
+  player.ammo = 0;
+  player.reserve = 3;
+
+  room.handleShot(first, {
+    shotId: 1,
+    yaw: player.yaw,
+    pitch: player.pitch,
+    direction: directionFromAngles(player.yaw, player.pitch),
+  }, 1600);
+
+  assert.equal(player.lastShotId, 0);
+  assert.equal(player.ammo, 0);
+  assert.equal(player.reserve, 3);
+  assert.equal(player.reloadEndsAt, 1600 + definition.reloadMs);
+  assert.equal(
+    first.messages.filter((message) => message.event === 'reload_start').length,
+    1,
+  );
+
+  room.handleShot(first, {
+    shotId: 1,
+    yaw: player.yaw,
+    pitch: player.pitch,
+    direction: directionFromAngles(player.yaw, player.pitch),
+  }, 1700);
+  assert.equal(
+    first.messages.filter((message) => message.event === 'reload_start').length,
+    1,
+  );
 });
 
 test('room advances only after both clients load and owns match timing', () => {
@@ -244,6 +288,7 @@ test('server-owned hit registration applies damage and ends a take', () => {
     rules: fastRules,
     now: 3000,
   });
+  room.seed = DETERMINISTIC_SPREAD_SEED;
   room.phase = 'playing';
   room.phaseEndsAt = 9000;
   const shooter = room.players[0];
@@ -254,6 +299,7 @@ test('server-owned hit registration applies damage and ends a take', () => {
   shooter.pitch = 0;
   shooter.weapon = 'crossbow';
   shooter.ammo = 3;
+  target.health = SERVER_WEAPONS.crossbow.damage;
   shooter.history = [{ at: 3000, position: [...shooter.position] }];
   target.history = [{ at: 3000, position: [...target.position] }];
 
@@ -316,6 +362,7 @@ test('the trade window preserves legitimate simultaneous eliminations', () => {
     rules: fastRules,
     now: 4000,
   });
+  room.seed = DETERMINISTIC_SPREAD_SEED;
   room.phase = 'playing';
   room.phaseEndsAt = 9000;
   const firstPlayer = room.players[0];
@@ -327,6 +374,7 @@ test('the trade window preserves legitimate simultaneous eliminations', () => {
   for (const player of room.players) {
     player.pitch = 0;
     player.weapon = 'crossbow';
+    player.health = SERVER_WEAPONS.crossbow.damage;
     player.ammo = 3;
     player.history = [{ at: 4000, position: [...player.position] }];
   }

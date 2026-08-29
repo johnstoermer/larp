@@ -12,7 +12,9 @@ export const WEAPONS = Object.freeze({
   },
   shortbow: {
     id: 'shortbow', asset: 'shortbow', name: 'ASHWOOD SHORTBOW', shortName: 'SHORTBOW',
-    ammo: 12, reserve: 36, reloadMs: 1500, damage: 24, headMultiplier: 1.6,
+    ammo: 1, reserve: 0, reloadMs: 0, usesAmmo: false,
+    viewmodelFrames: Object.freeze({ reload: 0 }),
+    damage: 24, headMultiplier: 1.6,
     interval: 0.46, spread: 0.022, focusSpread: 0.006, pellets: 1, range: 72,
     recoil: 0.34, automatic: false, projectile: false, fireMode: 'HOLD + RELEASE / ARROW',
     accent: 0xc89d57, casing: 0xc89d57, sound: 'shortbow',
@@ -40,7 +42,9 @@ export const WEAPONS = Object.freeze({
   },
   longbow: {
     id: 'longbow', asset: 'longbow', name: 'YEW LONGBOW', shortName: 'LONGBOW',
-    ammo: 1, reserve: 18, reloadMs: 980, damage: 54, headMultiplier: 1.75,
+    ammo: 1, reserve: 0, reloadMs: 0, usesAmmo: false,
+    viewmodelFrames: Object.freeze({ reload: 0 }),
+    damage: 54, headMultiplier: 1.75,
     interval: 0.98, spread: 0.009, focusSpread: 0.002, pellets: 1, range: 126,
     recoil: 0.66, automatic: false, projectile: false, fireMode: 'HOLD + RELEASE / ARROW',
     accent: 0xb88d50, casing: 0xb88d50, sound: 'longbow',

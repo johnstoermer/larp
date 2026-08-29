@@ -2,9 +2,16 @@ import * as THREE from 'three';
 import { clamp, damp, moveToward } from './math.js';
 import {
   createViewmodelFrameSet,
+  greatswordSweepForFrame,
   normalizeViewmodelState,
   SteppedViewmodelAnimation,
+  substantialAlphaBottomMargin,
 } from './viewmodelAnimation.js';
+import {
+  isEditableEventTarget,
+  recordGameplayKeyDown,
+  recordGameplayKeyUp,
+} from './keyboardInput.js';
 import { WEAPONS } from './weapons.js';
 
 const FORWARD = new THREE.Vector3();
@@ -19,11 +26,11 @@ const BOW_FULL_DRAW = 0.72;
 
 const VIEWMODEL_MOTION = Object.freeze({
   knives: { fireX: 120, fireY: -28, fireRotate: -9, reloadRotate: 13 },
-  shortbow: { fireX: -18, fireY: 22, fireRotate: 2, reloadRotate: -7 },
+  shortbow: { fireX: -18, fireY: 22, fireRotate: 2, reloadRotate: 0 },
   ember: { fireX: 10, fireY: -38, fireRotate: -3, reloadRotate: 16 },
   crossbow: { fireX: -26, fireY: 31, fireRotate: 1.5, reloadRotate: 8 },
   lightning: { fireX: 18, fireY: -31, fireRotate: 5, reloadRotate: -16 },
-  longbow: { fireX: -12, fireY: 28, fireRotate: -1.5, reloadRotate: -9 },
+  longbow: { fireX: -12, fireY: 28, fireRotate: -1.5, reloadRotate: 0 },
   greatsword: { fireX: 155, fireY: -70, fireRotate: -28, reloadRotate: 18 },
   fireball: { fireX: -22, fireY: -48, fireRotate: 4, reloadRotate: 14 },
 });
@@ -86,6 +93,13 @@ export class PlayerController {
     this.viewmodelFrames = new Map();
     this.viewmodelFrameSets = new Map();
     this.viewmodelResolvedUrls = new Map();
+    this.viewmodelBottomMargins = new Map();
+    this.viewmodelAnchorMotion = {
+      actionY: 0,
+      actionScale: 1,
+      viewmodelY: 0,
+      rotation: 0,
+    };
     this.viewmodelAnimation = new SteppedViewmodelAnimation();
     this.viewRoot = new THREE.Group();
     this.viewRoot.name = 'first-person-view-model';
@@ -107,17 +121,15 @@ export class PlayerController {
 
   bindInput() {
     window.addEventListener('keydown', (event) => {
-      const code = event.code;
-      if (
-        ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'KeyC', 'KeyR'].includes(code)
-      ) {
-        event.preventDefault();
-      }
-      if (!this.keys.has(code)) this.pressed.add(code);
-      this.keys.add(code);
+      recordGameplayKeyDown(event, this.keys, this.pressed);
     });
     window.addEventListener('keyup', (event) => {
-      this.keys.delete(event.code);
+      recordGameplayKeyUp(event, this.keys);
+    });
+    window.addEventListener('focusin', (event) => {
+      if (!isEditableEventTarget(event.target)) return;
+      this.keys.clear();
+      this.pressed.clear();
     });
     window.addEventListener('mousedown', (event) => {
       if (!this.buttons.has(event.button)) this.buttonPressed.add(event.button);
@@ -166,8 +178,10 @@ export class PlayerController {
 
     const showLoadedCandidate = () => {
       this.viewmodelResolvedUrls.set(frame.key, frame.url);
+      this.measureViewmodelBottomMargin(frame, image);
       if (this.viewmodelFrameKey === frame.key && this.viewmodelSprite) {
         this.viewmodelSprite.style.backgroundImage = `url('${frame.url}')`;
+        this.updateViewmodelBottomAnchor();
       }
     };
     image.onload = showLoadedCandidate;
@@ -175,6 +189,57 @@ export class PlayerController {
     this.viewmodelFrames.set(frame.key, image);
     this.viewmodelResolvedUrls.set(frame.key, frame.url);
     image.src = frame.url;
+  }
+
+  measureViewmodelBottomMargin(frame, image) {
+    if (typeof document === 'undefined' || !image.naturalWidth || !image.naturalHeight) return;
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.min(256, image.naturalWidth);
+      canvas.height = Math.max(
+        1,
+        Math.round(canvas.width * image.naturalHeight / image.naturalWidth),
+      );
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (!context) return;
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      const margin = substantialAlphaBottomMargin(pixels, canvas.width, canvas.height);
+      this.viewmodelBottomMargins.set(frame.key, {
+        ratio: margin / canvas.height,
+        aspect: image.naturalWidth / image.naturalHeight,
+      });
+    } catch {
+      // Same-origin production assets are readable. Keep the conservative CSS
+      // overscan if a development proxy makes canvas pixels unavailable.
+    }
+  }
+
+  updateViewmodelBottomAnchor(
+    actionY = this.viewmodelAnchorMotion.actionY,
+    actionScale = this.viewmodelAnchorMotion.actionScale,
+    viewmodelY = this.viewmodelAnchorMotion.viewmodelY,
+    rotation = this.viewmodelAnchorMotion.rotation,
+  ) {
+    if (!this.viewmodelSprite) return;
+    const measurement = this.viewmodelBottomMargins.get(this.viewmodelFrameKey);
+    const layoutWidth = this.viewmodelSprite.offsetWidth;
+    const layoutHeight = this.viewmodelSprite.offsetHeight;
+    const aspect = measurement?.aspect || 1;
+    const renderedHeight = Math.min(layoutHeight, layoutWidth / aspect);
+    const focusScale = this.focused ? 0.86 : 1;
+    const transparentPadding = (measurement?.ratio || 0) * renderedHeight
+      * focusScale * actionScale;
+    const upwardMotion = Math.max(0, -(viewmodelY + actionY));
+    const rotationSafety = Math.sin(Math.min(Math.PI / 2, Math.abs(rotation) * Math.PI / 180))
+      * renderedHeight * 0.08;
+    // Keep a tiny overlap below the viewport seam. The measured transparent
+    // padding and live action offset already place the occupied sleeve edge at
+    // the bottom; a large generic overscan made compact poses disappear below
+    // short/narrow screens.
+    const seamOverlap = 2;
+    const shift = Math.ceil(transparentPadding + upwardMotion + rotationSafety + seamOverlap);
+    this.viewmodelSprite.style.setProperty('--vm-frame-bottom-shift', `${shift}px`);
   }
 
   getViewmodelFrameSet(definition) {
@@ -209,6 +274,7 @@ export class PlayerController {
     this.viewmodelSprite.dataset.frame = String(frame.frameNumber);
     const url = this.viewmodelResolvedUrls.get(frame.key) ?? frame.url;
     this.viewmodelSprite.style.backgroundImage = `url('${url}')`;
+    this.updateViewmodelBottomAnchor();
   }
 
   resetViewmodelAnimation() {
@@ -268,6 +334,12 @@ export class PlayerController {
     this.viewmodelAnimation.frameCounts = Object.fromEntries(
       Object.entries(frameSet).map(([state, frames]) => [state, frames.length]),
     );
+    this.viewmodelAnchorMotion = {
+      actionY: 0,
+      actionScale: 1,
+      viewmodelY: 0,
+      rotation: definition.id === 'greatsword' ? -7 : 0,
+    };
     if (this.viewmodelSprite) {
       this.viewmodelSprite.dataset.weapon = definition.id;
       this.viewmodelFrameKey = '';
@@ -734,7 +806,17 @@ export class PlayerController {
       let actionRotate = 0;
       let actionScale = 1;
       const frame = this.updateViewmodelAnimation(delta);
-      if (this.reloading) {
+      if (this.weaponType === 'greatsword' && frame === 'fire') {
+        const frameCount = this.viewmodelAnimation.frameCount('fire');
+        const sweep = greatswordSweepForFrame(
+          this.viewmodelAnimation.frameIndex,
+          frameCount,
+        );
+        actionX = sweep.x;
+        actionY = sweep.y;
+        actionRotate = sweep.rotate;
+        actionScale = sweep.scale;
+      } else if (this.reloading) {
         const progress = 1 - this.reloadRemaining / Math.max(0.001, this.reloadDuration);
         const arc = Math.sin(progress * Math.PI);
         actionX = arc * -34;
@@ -758,10 +840,8 @@ export class PlayerController {
       this.viewmodelSprite.classList.toggle('is-sprinting', movement.sprinting);
       this.viewmodelSprite.classList.toggle('is-moving', movement.moving && this.grounded);
       this.viewmodelSprite.style.setProperty('--vm-x', `${this.sway.x * 240}px`);
-      this.viewmodelSprite.style.setProperty(
-        '--vm-y',
-        `${(-this.bob + this.landKick + this.weaponKick * 0.02) * 420}px`,
-      );
+      const viewmodelY = (-this.bob + this.landKick + this.weaponKick * 0.02) * 420;
+      this.viewmodelSprite.style.setProperty('--vm-y', `${viewmodelY}px`);
       this.viewmodelSprite.style.setProperty(
         '--vm-rotate',
         `${(this.sway.x * -38 + (movement.sprinting ? -5 : 0)).toFixed(2)}deg`,
@@ -771,6 +851,15 @@ export class PlayerController {
       this.viewmodelSprite.style.setProperty('--vm-action-rotate', `${actionRotate.toFixed(2)}deg`);
       this.viewmodelSprite.style.setProperty('--vm-action-scale', actionScale.toFixed(3));
       this.viewmodelSprite.style.setProperty('--vm-scale', this.focused ? '0.86' : '1');
+      this.viewmodelAnchorMotion = {
+        actionY,
+        actionScale,
+        viewmodelY,
+        rotation: actionRotate + this.sway.x * -38 +
+          (movement.sprinting ? -5 : 0) +
+          (this.weaponType === 'greatsword' ? -7 : 0),
+      };
+      this.updateViewmodelBottomAnchor();
       this.viewmodelLayer?.classList.toggle('active', this.viewRoot.visible && !this.dead);
     }
   }

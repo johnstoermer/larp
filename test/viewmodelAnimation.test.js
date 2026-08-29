@@ -3,12 +3,15 @@ import assert from 'node:assert/strict';
 import { WEAPONS } from '../src/game/weapons.js';
 import {
   createViewmodelFrameSet,
+  greatswordSweepForFrame,
   normalizeViewmodelState,
   SteppedViewmodelAnimation,
+  substantialAlphaBottomMargin,
   viewmodelFireStepMs,
   viewmodelFrameIndexForProgress,
   VIEWMODEL_FRAME_STEP_MS,
 } from '../src/game/viewmodelAnimation.js';
+import { LARP_ASSET_REVISION } from '../src/game/assetUrl.js';
 
 const BOWS = new Set(['shortbow', 'longbow']);
 
@@ -21,18 +24,18 @@ test('viewmodel frame sets map every action to a canonical numbered file', () =>
   assert.equal(frames.draw, undefined);
   assert.equal(
     frames.idle[0].url,
-    '/assets/larp/viewmodels/greatsword-idle.webp',
+    `/assets/larp/viewmodels/greatsword-idle.webp?v=${LARP_ASSET_REVISION}`,
   );
   assert.deepEqual(
     frames.fire.map((frame) => frame.url),
     [1, 2, 3, 4, 5, 6].map(
-      (number) => `/assets/larp/viewmodels/greatsword-fire-${number}.webp`,
+      (number) => `/assets/larp/viewmodels/greatsword-fire-${number}.webp?v=${LARP_ASSET_REVISION}`,
     ),
   );
   assert.ok(frames.fire.every((frame) => frame.duration === VIEWMODEL_FRAME_STEP_MS));
 });
 
-test('bows receive three draw frames and the complete manifest has 62 frames', () => {
+test('bows receive draw frames, omit reload frames, and the manifest has 56 frames', () => {
   let total = 0;
   for (const definition of Object.values(WEAPONS)) {
     const frames = createViewmodelFrameSet(definition, {
@@ -44,9 +47,10 @@ test('bows receive three draw frames and the complete manifest has 62 frames', (
         frames.draw.map((frame) => frame.frameNumber),
         [1, 2, 3],
       );
+      assert.equal(frames.reload, undefined);
     }
   }
-  assert.equal(total, 62);
+  assert.equal(total, 56);
 });
 
 test('greatsword uses six broad-swing poses and has no reload action', () => {
@@ -54,6 +58,27 @@ test('greatsword uses six broad-swing poses and has no reload action', () => {
   assert.deepEqual(frames.fire.map((frame) => frame.frameNumber), [1, 2, 3, 4, 5, 6]);
   assert.equal(frames.reload, undefined);
   assert.equal(WEAPONS.greatsword.usesAmmo, false);
+});
+
+test('greatsword poses sweep monotonically from screen-left to screen-right', () => {
+  const poses = [0, 1, 2, 3, 4, 5].map((frame) =>
+    greatswordSweepForFrame(frame, 6));
+  assert.ok(poses[0].x < 0);
+  assert.ok(poses.at(-1).x > 0);
+  assert.ok(poses.every((pose, index) => index === 0 || pose.x > poses[index - 1].x));
+  assert.ok(poses[2].y < poses[0].y);
+  assert.ok(poses[3].scale > poses[0].scale);
+});
+
+test('bows automatically nock without ammunition or reload actions', () => {
+  for (const weapon of BOWS) {
+    const definition = WEAPONS[weapon];
+    const frames = createViewmodelFrameSet(definition, { isBow: true });
+    assert.equal(definition.usesAmmo, false);
+    assert.equal(definition.reloadMs, 0);
+    assert.equal(definition.reserve, 0);
+    assert.equal(frames.reload, undefined);
+  }
 });
 
 test('draw and unknown states fall back to idle when unavailable', () => {
@@ -155,4 +180,15 @@ test('invalid timing input falls back to the standard frame step', () => {
   animation.play('fire');
   animation.update(Number.NaN);
   assert.equal(animation.frameIndex, 0);
+});
+
+test('viewmodel bottom anchoring ignores stray alpha and finds the occupied edge', () => {
+  const width = 10;
+  const height = 8;
+  const pixels = new Uint8ClampedArray(width * height * 4);
+  pixels[((height - 1) * width + 1) * 4 + 3] = 255;
+  for (let x = 0; x < 4; x += 1) {
+    pixels[((height - 3) * width + x) * 4 + 3] = 255;
+  }
+  assert.equal(substantialAlphaBottomMargin(pixels, width, height), 2);
 });

@@ -37,6 +37,36 @@ if (!titleState.webgl || titleState.errorVisible) {
   throw new Error(`Renderer did not initialize: ${JSON.stringify(titleState)}`);
 }
 
+await page.locator('#callsign').fill('');
+await page.locator('#callsign').focus();
+await page.evaluate(() => {
+  window.__LARP_NAME_KEY_EVENTS__ = [];
+  window.addEventListener('keydown', (event) => {
+    if (event.target?.id !== 'callsign') return;
+    const player = window.__LARP_GAME__?.player;
+    window.__LARP_NAME_KEY_EVENTS__.push({
+      code: event.code,
+      routedAsHeld: player?.keys.has(event.code) || false,
+      routedAsPressed: player?.pressed.has(event.code) || false,
+      defaultPrevented: event.defaultPrevented,
+    });
+  });
+});
+await page.keyboard.type('wasdr c');
+const callsignInput = await page.evaluate(() => ({
+  value: document.querySelector('#callsign')?.value,
+  events: window.__LARP_NAME_KEY_EVENTS__,
+}));
+if (
+  callsignInput.value !== 'wasdr c' ||
+  callsignInput.events.some((event) =>
+    event.defaultPrevented || event.routedAsHeld || event.routedAsPressed
+  )
+) {
+  throw new Error(`Callsign consumed gameplay keys: ${JSON.stringify(callsignInput)}`);
+}
+await page.locator('#callsign').fill('ROOKIE');
+
 await page.locator('#start-button').click();
 await page.waitForFunction(() => window.__LARP_GAME__?.mode === 'match');
 await page.evaluate(() => window.__LARP_GAME__.beginTake());
@@ -123,36 +153,43 @@ const bowHeld = await page.evaluate(() => ({
 }));
 await page.mouse.up();
 await page.waitForFunction(
-  (before) => window.__LARP_GAME__.player.ammo < before,
-  bowAmmoBefore,
-  { timeout: 3000 },
-);
-await page.waitForFunction(
   () => window.__LARP_GAME__.player.viewmodelSprite?.dataset.state === 'fire',
   null,
   { timeout: 3000 },
 );
 const bowReleased = await page.evaluate(() => ({
   ammo: window.__LARP_GAME__.player.ammo,
+  reserve: window.__LARP_GAME__.player.reserve,
+  usesAmmo: window.__LARP_GAME__.player.definition.usesAmmo,
   frame: window.__LARP_GAME__.player.viewmodelSprite?.dataset.state,
 }));
-await page.evaluate(() => {
-  const player = window.__LARP_GAME__.player;
-  player.ammo = Math.max(0, player.definition.ammo - 2);
-  player.reserve = Math.max(1, player.reserve);
-});
 await page.keyboard.press('KeyR');
-await page.waitForFunction(
-  () =>
-    window.__LARP_GAME__.player.reloading &&
-    window.__LARP_GAME__.player.viewmodelSprite?.dataset.state === 'reload',
-  null,
-  { timeout: 3000 },
-);
+await page.waitForTimeout(120);
 const bowReload = await page.evaluate(() => ({
   reloading: window.__LARP_GAME__.player.reloading,
-  frame: window.__LARP_GAME__.player.viewmodelSprite?.dataset.state,
+  hasReloadFrames: Boolean(
+    window.__LARP_GAME__.player.getViewmodelFrameSet(
+      window.__LARP_GAME__.player.definition,
+    ).reload,
+  ),
 }));
+await page.waitForFunction(() => {
+  const player = window.__LARP_GAME__?.player;
+  return player?.viewmodelBottomMargins.has(player.viewmodelFrameKey);
+});
+const viewmodelFraming = await page.evaluate(() => {
+  const player = window.__LARP_GAME__.player;
+  const sprite = player.viewmodelSprite;
+  const style = getComputedStyle(sprite);
+  const measurement = player.viewmodelBottomMargins.get(player.viewmodelFrameKey);
+  return {
+    frame: player.viewmodelFrameKey,
+    bottomMarginRatio: measurement?.ratio,
+    bottomShift: Number.parseFloat(style.getPropertyValue('--vm-frame-bottom-shift')),
+    layerActive: player.viewmodelLayer.classList.contains('active'),
+    backgroundImage: style.backgroundImage,
+  };
+});
 
 await page.screenshot({
   path: pathFromUrl(new URL('gameplay.png', output)),
@@ -220,22 +257,69 @@ const fighterPresentation = await page.evaluate(async () => {
   return results;
 });
 
+const combatFeedback = await page.evaluate(() => {
+  const game = window.__LARP_GAME__;
+  const player = game.player;
+  const bot = game.bot;
+  bot.reset(bot.position.clone(), bot.yaw);
+  bot.root.visible = true;
+  player.dead = false;
+  player.equip('knives', false);
+  player.lastShotAt = -Infinity;
+  game.elapsed += 1;
+  const originalTrace = game.traceAgainstBot;
+  game.traceAgainstBot = () => ({
+    kind: 'bot',
+    point: bot.getBodyCenter(),
+    normal: player.getAim().direction.clone().negate(),
+    distance: 4,
+    headshot: false,
+  });
+  try {
+    game.firePlayerWeapon();
+  } finally {
+    game.traceAgainstBot = originalTrace;
+  }
+  const number = [...game.vfx.transients]
+    .reverse()
+    .find((entry) => entry.object?.name === 'damage-number')?.object;
+  return {
+    botHealth: bot.health,
+    healthBarName: bot.healthBar?.name,
+    healthRatio: bot.healthBar?.userData.ratio,
+    healthFillVisible: bot.healthBarFill?.visible,
+    damageNumber: number?.userData.damage,
+    damageNumberHeadshot: number?.userData.headshot,
+    hitmarkerActive: game.ui.hitMarker.classList.contains('active'),
+  };
+});
+
 if (after.ammo >= before.ammo) throw new Error('Firing did not consume ammunition.');
 if (
   bowHeld.ammo !== bowAmmoBefore ||
   bowHeld.drawTime < 0.12 ||
   bowHeld.frame !== 'draw' ||
-  bowReleased.ammo !== bowAmmoBefore - 1 ||
+  bowReleased.ammo !== bowAmmoBefore ||
+  bowReleased.reserve !== 0 ||
+  bowReleased.usesAmmo !== false ||
   bowReleased.frame !== 'fire' ||
-  !bowReload.reloading ||
-  bowReload.frame !== 'reload'
+  bowReload.reloading ||
+  bowReload.hasReloadFrames
 ) {
-  throw new Error(`Bow hold/release/reload animation failed: ${JSON.stringify({
+  throw new Error(`Ammo-free bow draw/release contract failed: ${JSON.stringify({
     bowAmmoBefore,
     bowHeld,
     bowReleased,
     bowReload,
   })}`);
+}
+if (
+  !viewmodelFraming.layerActive ||
+  viewmodelFraming.bottomMarginRatio > 0.02 ||
+  viewmodelFraming.bottomShift > 180 ||
+  !viewmodelFraming.backgroundImage.includes('/assets/larp/viewmodels/shortbow-')
+) {
+  throw new Error(`Viewmodel alpha anchoring failed: ${JSON.stringify(viewmodelFraming)}`);
 }
 if (
   after.renderCalls < 1 ||
@@ -258,12 +342,23 @@ if (
   new Set(fighterPresentation.map((entry) => entry.textureUrl)).size !== 5 ||
   fighterPresentation.some((entry) =>
     entry.renderedState !== entry.requestedState ||
-    !entry.textureUrl.endsWith(`/crossbow-${entry.requestedState}.webp`) ||
+    new URL(entry.textureUrl).pathname !== `/assets/larp/fighters/crossbow-${entry.requestedState}.webp` ||
     entry.imageSize.some((size) => size < 1) ||
     (entry.requestedState === 'death' && !entry.visible)
   )
 ) {
   throw new Error(`Third-person fighter animation failed: ${JSON.stringify(fighterPresentation)}`);
+}
+if (
+  combatFeedback.botHealth !== 72 ||
+  combatFeedback.healthBarName !== 'character-health-bar' ||
+  Math.abs(combatFeedback.healthRatio - 0.72) > 0.001 ||
+  !combatFeedback.healthFillVisible ||
+  combatFeedback.damageNumber !== 28 ||
+  combatFeedback.damageNumberHeadshot !== false ||
+  !combatFeedback.hitmarkerActive
+) {
+  throw new Error(`Combat feedback failed: ${JSON.stringify(combatFeedback)}`);
 }
 if (pageErrors.length || consoleErrors.length) {
   throw new Error(
@@ -274,11 +369,14 @@ if (pageErrors.length || consoleErrors.length) {
 const report = {
   baseUrl,
   titleState,
+  callsignInput,
   before,
   after,
   mechanics,
   bow: { bowAmmoBefore, held: bowHeld, released: bowReleased, reload: bowReload },
+  viewmodelFraming,
   fighterPresentation,
+  combatFeedback,
   movementDistance,
   pageErrors,
   consoleErrors,

@@ -1,6 +1,6 @@
 export const PROTOCOL_VERSION = 3;
 export const SERVER_TICK_RATE = 30;
-export const SNAPSHOT_RATE = 20;
+export const SNAPSHOT_RATE = 30;
 
 export const MATCH_RULES = Object.freeze({
   roundsToWin: 4,
@@ -23,7 +23,8 @@ export const WEAPONS = Object.freeze({
     range: 24, projectile: false,
   },
   shortbow: {
-    ammo: 12, reserve: 36, reloadMs: 1500, damage: 24, headMultiplier: 1.6,
+    ammo: 1, reserve: 0, reloadMs: 0, usesAmmo: false,
+    damage: 24, headMultiplier: 1.6,
     interval: 0.46, spread: 0.022, focusSpread: 0.006, pellets: 1,
     range: 72, projectile: false,
   },
@@ -43,7 +44,8 @@ export const WEAPONS = Object.freeze({
     range: 86, projectile: false,
   },
   longbow: {
-    ammo: 1, reserve: 18, reloadMs: 980, damage: 54, headMultiplier: 1.75,
+    ammo: 1, reserve: 0, reloadMs: 0, usesAmmo: false,
+    damage: 54, headMultiplier: 1.75,
     interval: 0.98, spread: 0.009, focusSpread: 0.002, pellets: 1,
     range: 126, projectile: false,
   },

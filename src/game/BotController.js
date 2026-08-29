@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { CHARACTER_HITBOX } from '../../shared/characterHitbox.js';
 import { clamp, damp, moveToward } from './math.js';
 import { loadPhotoTexture } from './photoTexture.js';
 import { WEAPONS } from './weapons.js';
@@ -151,6 +152,55 @@ export class BotController {
     this.sprite.position.y = 0.015;
     this.sprite.scale.set(1.6, 2.4, 1);
     this.root.add(this.sprite);
+    this.createHealthBar();
+  }
+
+  createHealthBar() {
+    this.healthBar = new THREE.Group();
+    this.healthBar.name = 'character-health-bar';
+    this.healthBar.position.set(0, 2.76, 0);
+
+    const backgroundMaterial = new THREE.SpriteMaterial({
+      color: 0x101010,
+      transparent: true,
+      opacity: 0.94,
+      depthTest: true,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    this.healthBarBackground = new THREE.Sprite(backgroundMaterial);
+    this.healthBarBackground.name = 'character-health-bar-background';
+    this.healthBarBackground.scale.set(1.36, 0.16, 1);
+    this.healthBarBackground.renderOrder = 7;
+    this.healthBar.add(this.healthBarBackground);
+
+    const fillMaterial = new THREE.SpriteMaterial({
+      color: 0x28a745,
+      depthTest: true,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    this.healthBarFill = new THREE.Sprite(fillMaterial);
+    this.healthBarFill.name = 'character-health-bar-fill';
+    this.healthBarFill.center.set(0, 0.5);
+    this.healthBarFill.position.set(-0.63, 0, 0.012);
+    this.healthBarFill.renderOrder = 8;
+    this.healthBar.add(this.healthBarFill);
+    this.root.add(this.healthBar);
+    this.updateHealthBar();
+  }
+
+  updateHealthBar() {
+    if (!this.healthBar || !this.healthBarFill) return;
+    const ratio = clamp(this.health / 100, 0, 1);
+    this.healthBar.userData.health = this.health;
+    this.healthBar.userData.ratio = ratio;
+    this.healthBar.visible = this.root.visible;
+    this.healthBarFill.visible = ratio > 0;
+    this.healthBarFill.scale.set(Math.max(0.001, 1.26 * ratio), 0.1, 1);
+    this.healthBarFill.material.color.setHex(
+      ratio > 0.6 ? 0x28a745 : ratio > 0.3 ? 0xffc107 : 0xd6332f,
+    );
   }
 
   setWeaponModel(type) {
@@ -213,6 +263,7 @@ export class BotController {
     this.attackTime = 0;
     this.equip('knives');
     this.setFighterState('idle', true);
+    this.updateHealthBar();
   }
 
   equip(type) {
@@ -233,11 +284,15 @@ export class BotController {
   }
 
   getHeadCenter(target = new THREE.Vector3()) {
-    return target.copy(this.position).add(new THREE.Vector3(0, 1.78, 0));
+    return target
+      .copy(this.position)
+      .add(new THREE.Vector3(0, CHARACTER_HITBOX.head.offsetY, 0));
   }
 
   getBodyCenter(target = new THREE.Vector3()) {
-    return target.copy(this.position).add(new THREE.Vector3(0, 1.0, 0));
+    return target
+      .copy(this.position)
+      .add(new THREE.Vector3(0, CHARACTER_HITBOX.body.offsetY, 0));
   }
 
   getMuzzlePosition(target = new THREE.Vector3()) {
@@ -259,6 +314,7 @@ export class BotController {
       this.velocity.multiplyScalar(0.2);
     }
     this.updateFighterState();
+    this.updateHealthBar();
     return applied;
   }
 
@@ -543,6 +599,7 @@ export class BotController {
     this.spriteMaterial.color.setHex(this.flashHit > 0 ? 0xffc2b2 : 0xffffff);
     this.flashHit = Math.max(0, this.flashHit - dt);
     this.attackTime = Math.max(0, this.attackTime - dt);
+    this.updateHealthBar();
     this.root.updateMatrixWorld(true);
   }
 }

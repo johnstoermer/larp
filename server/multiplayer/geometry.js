@@ -1,4 +1,5 @@
 import { MAPS, clamp, seededRandom } from './config.js';
+import { CHARACTER_HITBOX } from '../../shared/characterHitbox.js';
 
 const EPSILON = 1e-7;
 
@@ -182,10 +183,28 @@ export function tracePlayer(mapIndex, origin, direction, target, range) {
   const world = firstWorldHit(mapIndex, origin, direction, range);
   if (!target || target.dead) return { ...world, target: false, headshot: false };
   const rewound = target.rewoundPosition ?? target.position;
-  const headCenter = [rewound[0], rewound[1] + 1.57, rewound[2]];
-  const bodyCenter = [rewound[0], rewound[1] + 0.9, rewound[2]];
-  const headDistance = raySphereDistance(origin, direction, headCenter, 0.32);
-  const bodyDistance = raySphereDistance(origin, direction, bodyCenter, 0.57);
+  const headCenter = [
+    rewound[0],
+    rewound[1] + CHARACTER_HITBOX.head.offsetY,
+    rewound[2],
+  ];
+  const bodyCenter = [
+    rewound[0],
+    rewound[1] + CHARACTER_HITBOX.body.offsetY,
+    rewound[2],
+  ];
+  const headDistance = raySphereDistance(
+    origin,
+    direction,
+    headCenter,
+    CHARACTER_HITBOX.head.radius,
+  );
+  const bodyDistance = raySphereDistance(
+    origin,
+    direction,
+    bodyCenter,
+    CHARACTER_HITBOX.body.radius,
+  );
   let distance = null;
   let headshot = false;
   if (headDistance != null && headDistance < world.distance) {

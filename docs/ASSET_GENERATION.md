@@ -66,9 +66,6 @@ These retained sources are under
 | `viewmodels/shortbow-fire-1.webp` | Released string; no arrow. | `exec-c4539ffd-5fdd-4ea4-8593-390184e56930.png` |
 | `viewmodels/shortbow-fire-2.webp` | Empty-hand follow-through; no arrow. | `exec-833d1a60-053e-423d-9b61-13e17d4937e9.png` |
 | `viewmodels/shortbow-fire-3.webp` | Lower recovery; no arrow. | `exec-0abff900-39a7-4e97-9dc4-9e069a201d25.png` |
-| `viewmodels/shortbow-reload-1.webp` | Present a separate blunt arrow. | `exec-2bb5bcd6-c03e-4ab8-b4b3-69c173af8394.png` |
-| `viewmodels/shortbow-reload-2.webp` | Align arrow to string. | `exec-03e98a25-72f1-431d-a117-1695f8d28ee8.png` |
-| `viewmodels/shortbow-reload-3.webp` | Seat arrow ready. | `exec-6d8662fe-8ce3-42d4-9fcb-5b0502510007.png` |
 | `viewmodels/shortbow-draw-1.webp` | Nock with little tension. | `exec-f1ac990d-0e5e-4963-a96b-099c8d200b9b.png` |
 | `viewmodels/shortbow-draw-2.webp` | Half draw. | `exec-d5aa2717-686c-46b9-b3cf-6b34020d478a.png` |
 | `viewmodels/shortbow-draw-3.webp` | Full draw. | `exec-509f8dc4-3de3-4b2e-aaf4-efc91c70164b.png` |
@@ -154,9 +151,6 @@ contain only the physical wand and its three practical LEDs.
 | `viewmodels/longbow-fire-1.webp` | Immediate post-release recoil; no arrow. | `exec-0aa6d37d-b0b1-4ea5-b07c-221b1384e78d.png` |
 | `viewmodels/longbow-fire-2.webp` | Peak empty-bow recoil; no arrow. | `exec-dcb75537-c53e-43bb-9c05-b42057b8c473.png` |
 | `viewmodels/longbow-fire-3.webp` | Empty-bow recovery; no arrow. | `exec-4f6df782-bff2-44d1-b651-e26d51cba7ce.png` |
-| `viewmodels/longbow-reload-1.webp` | Retrieve the sole blunt arrow beside the unloaded bow. | `exec-756508b0-b789-4ab5-8fcd-7760c0e95130.png` |
-| `viewmodels/longbow-reload-2.webp` | Align the sole arrow near a straight resting string. | `exec-101f88d5-7213-49a1-b721-e969d005c754.png` |
-| `viewmodels/longbow-reload-3.webp` | Nock the sole arrow without drawing. | `exec-baf5e7f7-35bd-4ae0-aa92-27f9726c5bb5.png` |
 
 The 24 accepted sources are genuine square generations with at least 12% empty
 space at the left, right, and top before processing. Each was resized to
@@ -204,3 +198,32 @@ fighter sources listed in the main manifest. All 23 files in this lane fit
 complete silhouettes into 512-by-768 alpha WebPs: outer-edge alpha is zero,
 the minimum horizontal gutter is 51 pixels, the minimum vertical gutter is 61
 pixels, and every output has a unique SHA-256 hash.
+
+## Live-play continuity correction pass
+
+The following retained sources supersede the earlier first-person entries for
+throwing knives, shortbow, and lightning wand. Each sequence used one accepted
+idle image as an immutable continuity master. Imagegen was asked to change only
+the action pose while preserving the same hands, skin, sleeve fabric and cuff,
+bracers, and homemade prop. Fire frames explicitly exclude any detached world
+projectile or magical effect. The final PNGs have true alpha and were imported
+as 768-by-768 WebPs without stretching; the knife set was additionally scaled
+to 82% and bottom-anchored to clear the 12% side-framing gate.
+
+| Runtime sequence | Locked visual continuity | Retained built-in sources |
+| --- | --- | --- |
+| `viewmodels/throwing-knives-*` | Burgundy polo sleeves; brown left bracer; black-and-gray taped right bracer; matching black foam/red-tape knives. | `/Users/johnstoermer/.codex/generated_images/01a04f1f-7636-7fb2-9b53-246db2cacbb6/retained-throwing-knives-{idle,fire-1,fire-2,fire-3,reload-1,reload-2,reload-3}-transparent.png` |
+| `viewmodels/shortbow-*` | Burgundy thrift tunic with gold cuff stitching; silver duct-tape guards; white taped PVC bow and orange cord. | `/Users/johnstoermer/.codex/generated_images/01a04f1f-88c7-7870-aceb-8d5b7985e931/shortbow-{idle,draw-1,draw-2,draw-3,fire-1,fire-2,fire-3}-candidate.png` |
+| `viewmodels/ember-gauntlet-*` | Beige tunic undersleeves; dark-brown buckled bracers; brown craft-foam glove with orange and silver tape. | `/Users/johnstoermer/.codex/generated_images/01a04e73-75aa-7582-845e-5aaf050c30bf/ember-gauntlet-{idle,fire-1,fire-2,fire-3,reload-1,reload-2,reload-3}-beige-alpha.png` |
+| `viewmodels/lightning-wand-*` | Midnight-blue velvet sleeves with narrow self-bound cuffs; warm-tan hands; one gray/blue taped wand with three LEDs and four foil fins. | `/Users/johnstoermer/.codex/generated_images/01a04f1f-7636-7fb2-9b53-246db2cacbb6/retained-lightning-wand-idle-transparent.png`; same directory `retained3-lightning-wand-{fire-1,fire-2,fire-3,reload-1,reload-2,reload-3}-transparent.png` |
+| `viewmodels/greatsword-*` | Navy tee sleeves; black faux-leather bracers; one broad silver EVA-foam sword in a two-handed left-to-right sweep. | `/Users/johnstoermer/.codex/generated_images/01a04f1f-88c7-7870-aceb-8d5b7985e931/greatsword-{idle,fire-1,fire-2,fire-3,fire-4,fire-5,fire-6}-candidate.png` |
+
+The shortbow is intentionally ammo-free at runtime and has no reload frames.
+Its three draw poses retain one attached blunt arrow; all three fire poses are
+post-release and contain no arrow. Lightning fire poses contain only physical
+hand recoil around the retained wand, with no bolt, glow, or detached effect.
+The ember gem is physically mounted on the palm: it is visible in ready/reload
+poses, while every post-release fire pose shows the gemless back of the glove.
+The greatsword sequence is ammo-free and projectile-free. Its six photographs
+stage a far-left windup, center crossing/contact, and far-right follow-through;
+the runtime adds a matching monotonic screen-space sweep instead of gun recoil.

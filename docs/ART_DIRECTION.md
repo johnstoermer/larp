@@ -7,8 +7,8 @@ with ordinary photographic lighting and believable proportions.
 
 The presentation is intentionally reminiscent of a quirky 2010 iPhone game:
 compact low-resolution textures, crisp live-action cutouts, blunt phone flash,
-slightly imperfect white balance, mild sensor noise and JPEG crunch, glossy
-bevels, leather-like panels, stitched borders, and restrained bloom. The
+slightly imperfect white balance, mild sensor noise and JPEG crunch, alongside
+square-edged Windows 98 interface chrome supplied by 98.css. The
 photographs remain photographs rather than illustrations, cartoons, 3D
 renders, polished fantasy concept art, or overt pixel art.
 
@@ -22,7 +22,7 @@ not distorted anatomy or an artificial-looking person.
 
 Every frame, fighter, pickup, projectile, prop, effect, and surface is stored
 as its own image under `public/assets/larp/`. There are no sprite sheets,
-atlases, or multi-frame source images. The 129 active WebP files are organized
+atlases, or multi-frame source images. The 123 active WebP files are organized
 as follows:
 
 | Directory | Files | Purpose |
@@ -31,7 +31,7 @@ as follows:
 | `props/` | 4 | Individual archery target, canvas tent, hay bale, and wooden cart cutouts. |
 | `pickups/` | 8 | One isolated homemade foam, PVC, cardboard, or practical-light prop per weapon. |
 | `fighters/` | 40 | Five ordinary LARPer poses per weapon: idle, walk, attack, hit, and non-graphic death. |
-| `viewmodels/` | 62 | Three-frame ranged actions, three bow-draw frames, and a six-pose ammo-free greatsword swing. |
+| `viewmodels/` | 56 | Three-frame ranged actions, three bow-draw frames with no bow reload assets, and a six-pose ammo-free greatsword swing. |
 | `effects/` | 6 | Individual arrow, bolt, knife, fireball, lightning, and dust-impact photographs. |
 | project root | 1 | The photographic Battle Village cover image. |
 
@@ -68,11 +68,29 @@ all sway and attack transforms. Runtime CSS adds weapon-specific recoil,
 reload arcs, bow-draw movement, sway, bob, focus, and sprint motion without
 combining frames into a sheet.
 
+Sleeves, hands, and handmade prop construction are continuity-locked within a
+weapon sequence. The visual-review audit renders every frame at both supported
+viewport extremes and requires its meaningful lower alpha edge to continue
+past the screen bottom while keeping the top and both sides clear. A manual
+sequence review additionally checks these identity anchors:
+
+| Weapon | Locked first-person identity |
+| --- | --- |
+| Throwing knives | Burgundy polo sleeves, matching brown leather wrist bracers, and the fighter's black/red foam knives. |
+| Shortbow | Burgundy tunic sleeves, gray taped wrist guards, and one consistent white PVC practice bow. |
+| Ember gauntlet | Beige undersleeve, brown bracer, and orange/silver taped glove; the gem is on the palm only, while every fire pose shows the gemless glove back. |
+| Crossbow | Plum sleeves, silver-tape forearm wraps, and the same wood/cardboard crossbow in every pose. |
+| Storm wand | One shade and construction of dark blue velvet bell sleeve, with the same gray PVC, blue-tape, foil-fin wand throughout. |
+| Longbow | Charcoal-green sleeves, brown bracers, and one white taped longbow. |
+| Greatsword | Navy sleeves, black faux-leather bracers, and one broad silver EVA blade sweeping from screen-left to screen-right. |
+| Fireball tome | Mustard robe sleeves and one brown ring-binder tome; fire frames contain no detached fireball. |
+
 ### First-person animation mapping
 
-The renderer registers 62 first-person frame slots. Seven ranged weapons use
-one idle plus three fire and three reload poses, and each bow adds three draw
-poses. The ammo-free greatsword replaces reload with six discrete fire poses,
+The renderer registers 56 first-person frame slots. Every weapon uses one idle
+plus its fire poses. Five charge-based ranged weapons add three reload poses;
+the two ammo-free bows use three draw poses and no reload imagery. The
+ammo-free greatsword uses six discrete fire poses,
 giving its broad melee arc 540 ms of readable windup, impact, follow-through,
 and recovery. Fire frames normally advance in 90 ms steps (about 11 fps), with
 no interpolation; the rapid-fire lightning wand divides its 160 ms cadence

@@ -10,6 +10,7 @@ import { Room } from './Room.js';
 const ROOM_ALPHABET = '346789ABCDEFGHJKMNPQRTUVWXY';
 const MAX_MESSAGE_BYTES = 4096;
 const MAX_MESSAGES_PER_SECOND = 100;
+const MAX_REALTIME_BUFFERED_BYTES = 16_384;
 
 function createRoomCode() {
   let result = '';
@@ -34,6 +35,7 @@ export class MultiplayerHub {
     this.privateLobbies = new Map();
     this.bytesSent = 0;
     this.messagesReceived = 0;
+    this.realtimeMessagesDropped = 0;
     this.startedAt = Date.now();
     this.lastTickAt = this.startedAt;
     this.tickDrift = 0;
@@ -133,7 +135,8 @@ export class MultiplayerHub {
       rateWindowAt: Date.now(),
       rateCount: 0,
       send: (payload) => this.send(session, payload),
-      sendEncoded: (encoded) => this.sendEncoded(session, encoded),
+      sendEncoded: (encoded, options) =>
+        this.sendEncoded(session, encoded, options),
     };
     socket.session = session;
     this.sessions.set(token, session);
@@ -203,6 +206,7 @@ export class MultiplayerHub {
     if (message.type === 'ping') {
       this.send(session, {
         type: 'pong',
+        sequence: Number.isSafeInteger(message.sequence) ? message.sequence : 0,
         sentAt: Number(message.sentAt) || 0,
         serverTime: now,
       });
@@ -350,8 +354,12 @@ export class MultiplayerHub {
     return this.sendSocketEncoded(socket, encoded);
   }
 
-  sendSocketEncoded(socket, encoded) {
+  sendSocketEncoded(socket, encoded, { volatile = false } = {}) {
     if (socket.readyState !== 1) return false;
+    if (volatile && socket.bufferedAmount > MAX_REALTIME_BUFFERED_BYTES) {
+      this.realtimeMessagesDropped += 1;
+      return false;
+    }
     this.bytesSent += Buffer.byteLength(encoded);
     socket.send(encoded);
     return true;
@@ -362,9 +370,9 @@ export class MultiplayerHub {
     return this.sendSocket(session.socket, payload);
   }
 
-  sendEncoded(session, encoded) {
+  sendEncoded(session, encoded, options) {
     if (!session?.socket) return false;
-    return this.sendSocketEncoded(session.socket, encoded);
+    return this.sendSocketEncoded(session.socket, encoded, options);
   }
 
   heartbeat() {
@@ -427,6 +435,7 @@ export class MultiplayerHub {
         (room) => !['result', 'reconnecting'].includes(room.phase),
       ).length,
       messagesReceived: this.messagesReceived,
+      realtimeMessagesDropped: this.realtimeMessagesDropped,
       bytesSent: this.bytesSent,
       tickRate: SERVER_TICK_RATE,
       tickDriftMs: Math.round(this.tickDrift * 100) / 100,
@@ -442,3 +451,5 @@ export class MultiplayerHub {
     this.wss.close();
   }
 }
+
+export { MAX_REALTIME_BUFFERED_BYTES };

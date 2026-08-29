@@ -10,8 +10,8 @@ by the competitive flow of small two-home arena maps. Red and blue timber
 houses face across a cover-filled center while hedge and tent lanes provide
 fast flanks. The visual presentation combines awkward direct-flash 2010 phone
 photography—ordinary heavier hobbyists, thick glasses, thrift-store costumes,
-and homemade foam/cardboard props—with glossy, beveled, skeuomorphic menus and
-HUD panels from the same era.
+and homemade foam/cardboard props—with a square-edged Windows 98 interface
+built directly on 98.css.
 
 ## Play modes
 
@@ -35,9 +35,11 @@ Win two takes to claim a round and four rounds to win the match.
 - EVA-foam greatsword
 - Fireball tome
 
-Every ranged weapon has one first-person idle image plus three-frame stepped
-firing and reload sequences. Both bows also have three draw frames: hold the
-left mouse button to draw and release it to loose the arrow. The greatsword is
+Every weapon has one first-person idle image plus a stepped firing sequence.
+Charge-based ranged weapons also have three reload poses. Both bows instead
+have three draw frames and automatically nock their next arrow without ammo or
+reload bookkeeping: hold the left mouse button to draw and release it to loose
+the arrow. The greatsword is
 a true ammo-free melee weapon with a dedicated six-frame windup, broad swing,
 impact, follow-through, and recovery sequence; it never reloads. Each weapon
 also has idle, walk, attack, hit, and non-graphic death photographs for its
@@ -47,6 +49,10 @@ The instant a shot enters the world, the corresponding first- and third-person
 attack cutouts contain no detached projectile. Arrows, bolts, knives, and the
 fireball therefore appear exactly once as world-space effects, never doubled
 inside the photographic player layer.
+
+For weapons that do use ammunition, pulling the trigger on an empty magazine
+starts a reload automatically whenever reserve ammunition remains. Bows and
+the greatsword stay exempt because they are intentionally ammo-free.
 
 ## Controls
 
@@ -62,8 +68,8 @@ inside the photographic player layer.
 
 ## Multiplayer
 
-The Node/WebSocket server simulates at 30 Hz and broadcasts snapshots at 20
-Hz. It owns match time, phases, scores, health, ammunition, reloads, pickups,
+The Node/WebSocket server simulates and broadcasts snapshots at 30 Hz. It owns
+match time, phases, scores, health, ammunition, reloads, pickups,
 fire cadence, hit tests, fireball simulation, overtime, and disconnect
 forfeits. Browsers predict only their own motion, reconcile against accepted
 input sequences, and interpolate their opponent.
@@ -71,6 +77,10 @@ input sequences, and interpolate their opponent.
 - Quick Match pairs two waiting players.
 - Private Room creates a five-letter code and copyable invite URL.
 - Reloading the page or briefly losing the socket reclaims the same session.
+- Practice and online play share the same forgiving photographed-character
+  body/head hit profile, while world cover still blocks the shot first.
+- Disposable movement and snapshot messages yield to reliable combat events
+  if a WebSocket becomes backpressured.
 - `/api/status` exposes aggregate health without player-identifying data.
 
 See [docs/MULTIPLAYER.md](docs/MULTIPLAYER.md) for the authority model.

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { versionLarpAssetUrl } from './assetUrl.js';
 
 const textureCache = new Map();
 
@@ -10,13 +11,14 @@ function transparentPixelCanvas() {
 }
 
 export function loadPhotoTexture(url, options = {}) {
-  const cacheKey = `${url}:${options.repeatX ?? 1}:${options.repeatY ?? 1}`;
+  const resolvedUrl = versionLarpAssetUrl(url);
+  const cacheKey = `${resolvedUrl}:${options.repeatX ?? 1}:${options.repeatY ?? 1}`;
   if (textureCache.has(cacheKey)) return textureCache.get(cacheKey);
 
   const texture = typeof document === 'undefined'
     ? new THREE.Texture()
     : new THREE.TextureLoader().load(
-      url,
+      resolvedUrl,
       (loaded) => {
         loaded.needsUpdate = true;
       },

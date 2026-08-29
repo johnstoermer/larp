@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MultiplayerHub } from './multiplayer/Hub.js';
+import { cacheControlForFile } from './cachePolicy.js';
 
 const app = express();
 const port = Number(process.env.PORT || 8080);
@@ -23,11 +24,7 @@ app.use(
   express.static(root, {
     index: 'index.html',
     setHeaders(response, filePath) {
-      if (filePath.endsWith('.html')) {
-        response.setHeader('Cache-Control', 'no-cache');
-      } else {
-        response.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-      }
+      response.setHeader('Cache-Control', cacheControlForFile(filePath));
       response.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     },
   }),
