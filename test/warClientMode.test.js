@@ -34,6 +34,8 @@ function element() {
 
 test('lobby selections map to distinct authoritative War modes', () => {
   assert.equal(normalizeLobbyMode('arena'), 'arena');
+  assert.equal(normalizeLobbyMode('arena-2v2'), 'arena-2v2');
+  assert.equal(normalizeLobbyMode('arena_2v2'), 'arena-2v2');
   assert.equal(normalizeLobbyMode('war'), 'war');
   assert.equal(normalizeLobbyMode('war-tdm'), 'war-tdm');
   assert.equal(normalizeLobbyMode('unknown'), 'arena');

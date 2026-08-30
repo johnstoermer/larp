@@ -163,6 +163,7 @@ test('all live UI surfaces use 98.css structures and the HUD stays minimal', () 
   assert.doesNotMatch(visibleUiSources, /showPickup\s*\(/);
   assert.doesNotMatch(styles, /cover\.webp/i);
   assert.match(html, /<option value="arena">Arena \(1v1\)<\/option>/);
+  assert.match(html, /<option value="arena-2v2">Arena \(2v2\)<\/option>/);
   assert.match(html, /<option value="war">War Control \(20v20\)<\/option>/);
   assert.match(
     html,
@@ -190,7 +191,10 @@ test('all live UI surfaces use 98.css structures and the HUD stays minimal', () 
     /<span>Red<\/span><strong id="war-red-score">0%<\/strong>[\s\S]*?<strong id="war-blue-score">0%<\/strong><span>Blue<\/span>/,
   );
   assert.doesNotMatch(styles, /\.war-score\s*>\s*div:nth-child\(3\)/);
-  assert.match(visibleUiSources, /this\.arenaActions\.classList\.toggle\('hidden', war\)/);
+  assert.match(
+    visibleUiSources,
+    /this\.arenaActions\.classList\.toggle\('hidden', selected !== 'arena'\)/,
+  );
   assert.equal(
     [...visibleUiSources.matchAll(/this\.warTeam === 0 \? 'Red Team' : 'Blue Team'/g)].length,
     2,

@@ -2,7 +2,7 @@
 
 LARP runs one authoritative match process on Fly.io. The browser never submits
 damage, scores, ammunition totals, pickup outcomes, or control-point ownership.
-Protocol version 6 is the shared wire contract for the browser client,
+Protocol version 7 is the shared wire contract for the browser client,
 automated load clients, and server. War messages are additive, mode-scoped
 messages so an Arena client never enters the 40-player path accidentally.
 
@@ -17,6 +17,12 @@ messages so an Arena client never enters the 40-player path accidentally.
 5. The server advances match phases and sends fresh snapshots at 30 Hz.
 6. A dropped socket freezes match time for up to 20 seconds. Reconnecting with
    the same token restores the player, room, and slot.
+
+Arena 2v2 joins a live four-slot Battle Village room immediately. Two slots
+belong to each team, server bots fill every open slot, and later humans replace
+bots in balanced team order. Unlike the duel queue, a 2v2 disconnect hands the
+slot to a bot so the other three combatants keep playing; the reconnect token
+reserves that exact slot for 20 seconds.
 
 War play instead joins an available 20-versus-20 room for the selected mode
 immediately. Control scores by holding the central point; Team Deathmatch is
@@ -40,6 +46,10 @@ The server owns:
 - world occlusion plus shared photographed-character body and head hit tests;
 - fireball movement, splash occlusion, self-damage, and impulse;
 - movement sanity checks, arena bounds, and collision rejection.
+
+For Arena 2v2 the same authority also owns balanced team allocation, bot
+takeover, ally-damage rejection, assist credit, and the rule that a take ends
+only when both members of one team are eliminated.
 
 For War the server additionally owns team allocation, class validation,
 20-versus-20 bot fill, fixed-tick bot movement and aim, respawns, mode scoring,

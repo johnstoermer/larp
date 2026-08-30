@@ -3,7 +3,7 @@ import {
   quantizeFixedPhotoPropYaw,
 } from '../../shared/warSceneryGeometry.js';
 
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
 export const SERVER_TICK_RATE = 30;
 export const SNAPSHOT_RATE = 30;
 

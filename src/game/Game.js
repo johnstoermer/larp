@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { CHARACTER_HITBOX } from '../../shared/characterHitbox.js';
+import { ARENA_2V2_MODE } from '../../shared/arena2v2Config.js';
 import {
   WAR_CLASSES,
   WAR_MODE_CONTROL,
@@ -24,6 +25,11 @@ import { clamp, seededRandom, shuffle } from './math.js';
 import { loadPhotoTexture } from './photoTexture.js';
 import { getArenaLoadout, WEAPONS } from './weapons.js';
 import { buildScoreboardRows, observedArenaStats } from './scoreboard.js';
+import {
+  guardActiveMatchBeforeUnload,
+  releaseGameplayKeyboardCapture,
+  requestGameplayKeyboardCapture,
+} from './gameplayKeyboardCapture.js';
 
 const TEMP_ORIGIN = new THREE.Vector3();
 const TEMP_DIRECTION = new THREE.Vector3();
@@ -37,12 +43,16 @@ const TEMP_SPHERE = new THREE.Sphere();
 const fireballTexture = loadPhotoTexture('/assets/larp/effects/fireball.webp');
 
 const LOBBY_MODE_ARENA = 'arena';
+const LOBBY_MODE_ARENA_2V2 = 'arena-2v2';
 const LOBBY_MODE_WAR_CONTROL = 'war';
 const LOBBY_MODE_WAR_TDM = 'war-tdm';
 
 export function normalizeLobbyMode(value) {
   if (value === LOBBY_MODE_WAR_TDM) return LOBBY_MODE_WAR_TDM;
   if (value === LOBBY_MODE_WAR_CONTROL) return LOBBY_MODE_WAR_CONTROL;
+  if (value === LOBBY_MODE_ARENA_2V2 || value === ARENA_2V2_MODE) {
+    return LOBBY_MODE_ARENA_2V2;
+  }
   return LOBBY_MODE_ARENA;
 }
 
@@ -66,7 +76,16 @@ export function formatWarScore(value, warMode = WAR_MODE_CONTROL) {
 }
 
 function isWarLobbyMode(value) {
-  return normalizeLobbyMode(value) !== LOBBY_MODE_ARENA;
+  const mode = normalizeLobbyMode(value);
+  return mode === LOBBY_MODE_WAR_CONTROL || mode === LOBBY_MODE_WAR_TDM;
+}
+
+function isArena2v2MatchType(value) {
+  return value === ARENA_2V2_MODE;
+}
+
+function isOnlineArenaMatchType(value) {
+  return value === 'online' || isArena2v2MatchType(value);
 }
 
 function isPlayableWarPhase(phase) {
@@ -128,6 +147,19 @@ export function warResumeCounters(snapshot, slot) {
   };
 }
 
+export function arenaResumeCounters(snapshot, slot) {
+  const local = snapshot?.players?.find(
+    (player) => Number(player.slot) === Number(slot),
+  );
+  return {
+    state: Math.max(0, Number(local?.ack) || 0),
+    shot: Math.max(
+      0,
+      Number(local?.attackSequence ?? local?.shotAck) || 0,
+    ),
+  };
+}
+
 export class Game {
   constructor(canvas) {
     this.ui = new Interface();
@@ -148,6 +180,8 @@ export class Game {
     this.network = new NetworkClient();
     this.pickups = new PickupManager(this.scene, this.camera);
     this.canvas = canvas;
+    this.fullscreenTarget = canvas.closest?.('#game-root') ?? canvas;
+    this.gameplayKeyboardCaptureRequested = false;
     this.mode = 'title';
     this.phase = 'title';
     this.phaseTimer = 0;
@@ -179,6 +213,7 @@ export class Game {
     this.matchType = 'practice';
     this.onlinePaused = false;
     this.onlineSlot = 0;
+    this.onlineTeam = 0;
     this.onlineOpponent = 'Opponent';
     this.onlineRoomId = null;
     this.onlinePrivateMatch = false;
@@ -276,9 +311,10 @@ export class Game {
     this.ui.restartButton.addEventListener('click', () => this.startMatch());
     this.ui.quitButton.addEventListener('click', () => this.returnToTitle());
     this.ui.rematchButton.addEventListener('click', () => {
+      this.captureGameplayKeyboard();
       if (this.matchType === 'war') {
         this.startQuickPlay();
-      } else if (this.matchType === 'online') {
+      } else if (isOnlineArenaMatchType(this.matchType)) {
         this.network.send({ type: 'rematch' });
         this.ui.showRematchWaiting();
       } else {
@@ -298,7 +334,7 @@ export class Game {
       this.vfx.resize(ratio);
     });
     this.canvas.addEventListener('contextmenu', (event) => event.preventDefault());
-    this.canvas.addEventListener('click', () => {
+    this.canvas.addEventListener('click', async () => {
       const playable = this.phase === 'playing' || (
         this.matchType === 'war' &&
         isPlayableWarPhase(this.phase)
@@ -310,7 +346,19 @@ export class Game {
         !document.pointerLockElement
       ) {
         this.ui.hideAnnouncement();
-        this.requestPointerLock();
+        await this.captureGameplayKeyboard();
+        const stillPlayable = this.phase === 'playing' || (
+          this.matchType === 'war' &&
+          isPlayableWarPhase(this.phase)
+        );
+        if (
+          this.mode === 'match' &&
+          stillPlayable &&
+          !this.player.dead &&
+          !document.pointerLockElement
+        ) {
+          this.requestPointerLock();
+        }
       }
     });
     window.addEventListener('resize', () => {
@@ -329,7 +377,8 @@ export class Game {
         else if (this.mode === 'result') {
           if (this.matchType === 'war') {
             this.startQuickPlay();
-          } else if (this.matchType === 'online') {
+          } else if (isOnlineArenaMatchType(this.matchType)) {
+            this.captureGameplayKeyboard();
             this.network.send({ type: 'rematch' });
             this.ui.showRematchWaiting();
           } else {
@@ -348,6 +397,12 @@ export class Game {
     });
     window.addEventListener('keyup', (event) => {
       if (event.code === 'Tab') this.ui.hideScoreboard();
+    });
+    window.addEventListener('beforeunload', (event) => {
+      guardActiveMatchBeforeUnload(
+        event,
+        this.mode === 'match' || this.mode === 'paused',
+      );
     });
     window.addEventListener('blur', () => this.ui.hideScoreboard());
     document.addEventListener('pointerlockchange', () => {
@@ -389,14 +444,14 @@ export class Game {
       });
     }
 
-    if (this.matchType === 'online') {
+    if (isOnlineArenaMatchType(this.matchType)) {
       const players = (this.onlineSnapshot?.players ?? []).map((player) => {
-        const slot = Number(player.slot) === 1 ? 1 : 0;
-        const fallback = this.arenaScoreboardStats[slot];
+        const slot = Math.max(0, Math.trunc(Number(player.slot) || 0));
+        const fallback = this.arenaScoreboardStats[slot] ?? {};
         return {
           ...player,
           id: slot,
-          team: slot,
+          team: player.team ?? slot,
           kills: player.kills ?? fallback.kills,
           deaths: player.deaths ?? fallback.deaths,
           assists: player.assists ?? fallback.assists,
@@ -404,7 +459,7 @@ export class Game {
       });
       return buildScoreboardRows(players, {
         localId: this.onlineSlot,
-        localTeam: this.onlineSlot,
+        localTeam: this.onlineTeam,
       });
     }
 
@@ -438,12 +493,14 @@ export class Game {
     this.network.addEventListener('status', (event) => {
       const { status, online } = event.detail;
       this.ui.setConnection(status, this.network.rtt, online);
-      if (this.matchType !== 'online' && this.matchType !== 'war') return;
+      if (!isOnlineArenaMatchType(this.matchType) && this.matchType !== 'war') return;
       if (status === 'reconnecting' || status === 'offline') {
         this.ui.showConnectionOverlay(
           this.matchType === 'war'
             ? 'Reconnecting to War.'
-            : 'Reconnecting. The match will wait for twenty seconds.',
+            : isArena2v2MatchType(this.matchType)
+              ? 'Reconnecting.'
+              : 'Reconnecting. The match will wait for twenty seconds.',
         );
       } else if (status === 'online') {
         this.ui.hideConnectionOverlay();
@@ -475,10 +532,14 @@ export class Game {
       this.startWarMatch(event.detail);
     });
     this.network.addEventListener('snapshot', (event) => {
-      if (this.matchType === 'online') this.applyOnlineSnapshot(event.detail.state);
+      if (isOnlineArenaMatchType(this.matchType)) {
+        this.applyOnlineSnapshot(event.detail.state);
+      }
     });
     this.network.addEventListener('event', (event) => {
-      if (this.matchType === 'online') this.handleOnlineEvent(event.detail);
+      if (isOnlineArenaMatchType(this.matchType)) {
+        this.handleOnlineEvent(event.detail);
+      }
     });
     this.network.addEventListener('war_snapshot', (event) => {
       if (this.matchType === 'war') this.applyWarSnapshot(event.detail.state);
@@ -492,7 +553,7 @@ export class Game {
     });
     this.network.addEventListener('left_match', () => {
       if (
-        (this.matchType === 'online' || this.matchType === 'war') &&
+        (isOnlineArenaMatchType(this.matchType) || this.matchType === 'war') &&
         this.mode !== 'title'
       ) {
         this.setupTitleScene();
@@ -541,14 +602,19 @@ export class Game {
   async startQuickPlay() {
     if (
       this.mode === 'starting' ||
-      (this.matchType === 'online' || this.matchType === 'war') && this.mode === 'match'
+      (isOnlineArenaMatchType(this.matchType) || this.matchType === 'war') &&
+        this.mode === 'match'
     ) {
       return;
     }
+    this.captureGameplayKeyboard();
     const selectedMode = normalizeLobbyMode(this.ui.gameMode.value);
     const warSelection = isWarLobbyMode(selectedMode);
+    const arena2v2Selection = selectedMode === LOBBY_MODE_ARENA_2V2;
     const classId = normalizeWarClass(this.ui.warClass.value);
-    if (warSelection && this.network.inMatch) this.network.leave();
+    if ((warSelection || arena2v2Selection) && this.network.inMatch) {
+      this.network.leave();
+    }
     this.titleAttract.stop();
     await this.audio.init();
     this.audio.click(true);
@@ -556,22 +622,29 @@ export class Game {
       title: 'Connecting',
       detail: 'Connecting to the match server.',
     });
-    if (!(await this.connectOnline())) return;
+    if (!(await this.connectOnline())) {
+      this.releaseGameplayKeyboard();
+      return;
+    }
     if (warSelection) {
       this.warMode = warModeForLobbyMode(selectedMode);
       this.warClassId = classId;
       this.network.warPlay(classId, this.warMode);
+    } else if (arena2v2Selection) {
+      this.network.arena2v2Play();
     } else {
       this.network.quickPlay();
     }
   }
 
   async createPrivateRoom() {
+    this.captureGameplayKeyboard();
     this.ui.showQueue({
       title: 'Creating Match',
       detail: 'Connecting to the match server.',
     });
     if (await this.connectOnline()) this.network.createPrivate();
+    else this.releaseGameplayKeyboard();
   }
 
   async joinPrivateRoom() {
@@ -580,12 +653,14 @@ export class Game {
       this.ui.showLobbyError('Enter the complete five-character match code.');
       return;
     }
+    this.captureGameplayKeyboard();
     this.ui.showQueue({
       title: 'Joining Match',
       detail: `Joining match ${code}.`,
       code,
     });
     if (await this.connectOnline()) this.network.joinPrivate(code);
+    else this.releaseGameplayKeyboard();
   }
 
   async copyInviteLink() {
@@ -612,6 +687,23 @@ export class Game {
     }
   }
 
+  captureGameplayKeyboard() {
+    this.gameplayKeyboardCaptureRequested = true;
+    const capture = requestGameplayKeyboardCapture(this.fullscreenTarget);
+    void capture.then(() => {
+      if (!this.gameplayKeyboardCaptureRequested) {
+        void releaseGameplayKeyboardCapture(this.fullscreenTarget);
+      }
+    });
+    return capture;
+  }
+
+  releaseGameplayKeyboard() {
+    if (!this.gameplayKeyboardCaptureRequested) return;
+    this.gameplayKeyboardCaptureRequested = false;
+    void releaseGameplayKeyboardCapture(this.fullscreenTarget);
+  }
+
   activateArena(nextArena) {
     if (!nextArena) return;
     if (this.arena !== nextArena) {
@@ -627,15 +719,30 @@ export class Game {
   ensureWarWorld() {
     if (!this.warArena) {
       this.warArena = new WarArena(this.scene, this.rendering.renderer);
-      this.warCrowd = new WarCrowd(this.scene);
       this.warArena.root.visible = false;
-      this.warCrowd.root.visible = false;
     }
+    this.ensureFighterCrowd();
     this.activateArena(this.warArena);
     this.warCrowd.root.visible = true;
   }
 
+  ensureFighterCrowd() {
+    if (!this.warCrowd) {
+      this.warCrowd = new WarCrowd(this.scene);
+      this.warCrowd.root.visible = false;
+    }
+    return this.warCrowd;
+  }
+
+  ensureArena2v2World() {
+    this.activateArena(this.baseArena);
+    const crowd = this.ensureFighterCrowd();
+    crowd.root.visible = true;
+    return crowd;
+  }
+
   setupTitleScene() {
+    this.releaseGameplayKeyboard();
     this.titleAttract.stop();
     this.activateArena(this.baseArena);
     if (this.warCrowd) {
@@ -648,6 +755,7 @@ export class Game {
     this.onlinePaused = false;
     this.onlineRoomId = null;
     this.onlinePrivateMatch = false;
+    this.onlineTeam = 0;
     this.onlineSnapshot = null;
     this.onlineStateHistory.clear();
     this.pendingPickupClaims.clear();
@@ -677,6 +785,7 @@ export class Game {
 
   async startMatch() {
     if (this.mode === 'starting') return;
+    const capture = this.captureGameplayKeyboard();
     this.titleAttract.stop();
     this.activateArena(this.baseArena);
     this.player.setMovementScale?.(1);
@@ -685,7 +794,7 @@ export class Game {
     this.ui.setOnlineMatch(false);
     this.ui.setWarMatch(false);
     this.mode = 'starting';
-    await this.audio.init();
+    await Promise.all([capture, this.audio.init()]);
     this.audio.click(true);
     this.mode = 'match';
     this.phase = 'loading';
@@ -714,37 +823,67 @@ export class Game {
 
   startOnlineMatch(message) {
     this.titleAttract.stop();
-    this.activateArena(this.baseArena);
-    this.player.setMovementScale?.(1);
     const snapshot = message.snapshot;
     if (!snapshot) return;
-    this.matchType = 'online';
+    const teamMode = message.mode === ARENA_2V2_MODE || snapshot.mode === ARENA_2V2_MODE;
+    if (teamMode) this.ensureArena2v2World();
+    else {
+      this.activateArena(this.baseArena);
+      if (this.warCrowd) {
+        this.warCrowd.clear();
+        this.warCrowd.root.visible = false;
+      }
+    }
+    this.player.setMovementScale?.(1);
+    this.matchType = teamMode ? ARENA_2V2_MODE : 'online';
     this.mode = 'match';
     this.phase = snapshot.phase;
     this.onlinePaused = false;
-    this.onlineSlot = Number(message.slot) === 1 ? 1 : 0;
-    this.onlineOpponent = message.opponent || 'Opponent';
+    this.onlineSlot = Math.max(0, Math.trunc(Number(message.slot) || 0));
+    const localState = snapshot.players?.find(
+      (player) => Number(player.slot) === this.onlineSlot,
+    );
+    this.onlineTeam = teamMode
+      ? (Number(message.team ?? localState?.team) === 1 ? 1 : 0)
+      : this.onlineSlot;
+    this.onlineOpponent = message.opponent || (teamMode ? 'Enemy Team' : 'Opponent');
     this.onlinePrivateMatch = Boolean(message.privateMatch);
     this.onlineRoomId = message.roomId;
     this.matchSeed = message.seed;
     this.mapOrder = message.mapOrder;
-    this.onlineSequence = 0;
-    this.onlineShotSequence = 0;
+    const resumeCounters = arenaResumeCounters(snapshot, this.onlineSlot);
+    this.onlineSequence = resumeCounters.state;
+    this.onlineShotSequence = resumeCounters.shot;
     this.onlineSendAccumulator = 0;
     this.onlineStateHistory.clear();
-    this.arenaScoreboardStats = [
-      { kills: 0, deaths: 0, assists: 0 },
-      { kills: 0, deaths: 0, assists: 0 },
-    ];
+    this.onlineRoundLoaded = null;
+    this.onlineMapLoaded = null;
+    this.arenaScoreboardStats = Array.from(
+      { length: teamMode ? 4 : 2 },
+      () => ({ kills: 0, deaths: 0, assists: 0 }),
+    );
     this.pendingPickupClaims.clear();
     this.lastOnlinePhase = null;
     this.lastOnlineCountdown = 4;
-    this.ui.setOnlineMatch(true, this.onlineOpponent);
+    this.ui.setOnlineMatch(true, this.onlineOpponent, !teamMode);
     this.ui.setWarMatch(false);
+    if (teamMode) {
+      this.ui.setSelectedMode(LOBBY_MODE_ARENA_2V2);
+      this.warCrowd.localId = this.onlineSlot;
+      this.warCrowd.localTeam = this.onlineTeam;
+      this.remote.clear();
+      this.bot.root.visible = false;
+    }
     this.ui.hideConnectionOverlay();
     this.ui.showHUD();
     this.player.viewRoot.visible = true;
     this.applyOnlineSnapshot(snapshot, true);
+    if (snapshot.phase === 'playing') {
+      this.ui.hideAnnouncement();
+      if (!document.pointerLockElement && !this.player.dead) {
+        this.ui.showAnnouncement('Match', 'Click to start');
+      }
+    }
     this.audio.click(true);
   }
 
@@ -778,6 +917,7 @@ export class Game {
     this.ui.setOnlineMatch(
       true,
       this.warTeam === 0 ? 'Red Team' : 'Blue Team',
+      false,
     );
     this.ui.setWarMatch(true, this.warTeam, this.warMode);
     this.ui.hideConnectionOverlay();
@@ -1010,6 +1150,7 @@ export class Game {
     this.player.inputEnabled = false;
     this.player.viewRoot.visible = false;
     if (document.pointerLockElement) document.exitPointerLock();
+    this.releaseGameplayKeyboard();
     this.ui.resetRematchButton();
     this.ui.showResult(
       won,
@@ -1020,6 +1161,7 @@ export class Game {
   }
 
   loadOnlineRound(state) {
+    const teamMode = isArena2v2MatchType(this.matchType);
     this.clearProjectiles();
     this.onlineProjectiles.clear();
     this.vfx.clear();
@@ -1027,8 +1169,13 @@ export class Game {
     const loadout = state.pickups.map((pickup) => pickup.type);
     this.roundLoadout = loadout;
     this.pickups.reset(this.arena.weaponSlots, loadout);
-    const local = state.players[this.onlineSlot];
-    const remote = state.players[this.onlineSlot === 0 ? 1 : 0];
+    const local = state.players.find(
+      (player) => Number(player.slot) === this.onlineSlot,
+    );
+    const remote = teamMode
+      ? null
+      : state.players.find((player) => Number(player.slot) !== this.onlineSlot);
+    if (!local || (!teamMode && !remote)) return;
     this.player.reset(
       new THREE.Vector3().fromArray(local.position),
       local.yaw,
@@ -1042,9 +1189,16 @@ export class Game {
     }
     this.player.health = local.health;
     this.player.dead = local.dead;
-    this.remote.reset(remote.position, remote.yaw, remote.weapon);
-    this.remote.applyImmediate(remote);
-    this.bot.root.visible = true;
+    if (teamMode) {
+      this.remote.clear();
+      this.bot.root.visible = false;
+      this.warCrowd.applySnapshot(state.players, performance.now());
+      this.warCrowd.root.visible = true;
+    } else {
+      this.remote.reset(remote.position, remote.yaw, remote.weapon);
+      this.remote.applyImmediate(remote);
+      this.bot.root.visible = true;
+    }
     this.player.viewRoot.visible = !local.dead;
     this.onlineRoundLoaded = state.roundNumber;
     this.onlineMapLoaded = state.mapIndex;
@@ -1060,7 +1214,9 @@ export class Game {
 
   returnToTitle() {
     if (document.pointerLockElement) document.exitPointerLock();
-    if (this.matchType === 'online' || this.matchType === 'war') this.network.leave();
+    if (isOnlineArenaMatchType(this.matchType) || this.matchType === 'war') {
+      this.network.leave();
+    }
     this.audio.click();
     this.setupTitleScene();
   }
@@ -1071,7 +1227,7 @@ export class Game {
       isPlayableWarPhase(this.phase)
     );
     if (this.mode !== 'match' || !playable) return;
-    if (this.matchType === 'online' || this.matchType === 'war') {
+    if (isOnlineArenaMatchType(this.matchType) || this.matchType === 'war') {
       this.onlinePaused = true;
       this.player.inputEnabled = false;
       this.ui.showPause();
@@ -1084,17 +1240,19 @@ export class Game {
 
   async resume() {
     if (
-      (this.matchType === 'online' || this.matchType === 'war') &&
+      (isOnlineArenaMatchType(this.matchType) || this.matchType === 'war') &&
       this.onlinePaused
     ) {
-      await this.audio.init();
+      const capture = this.captureGameplayKeyboard();
+      await Promise.all([capture, this.audio.init()]);
       this.onlinePaused = false;
       this.ui.hidePause();
       this.requestPointerLock();
       return;
     }
     if (this.mode !== 'paused') return;
-    await this.audio.init();
+    const capture = this.captureGameplayKeyboard();
+    await Promise.all([capture, this.audio.init()]);
     this.mode = 'match';
     this.ui.hidePause();
     this.requestPointerLock();
@@ -1208,35 +1366,48 @@ export class Game {
     this.player.inputEnabled = false;
     this.player.viewRoot.visible = false;
     if (document.pointerLockElement) document.exitPointerLock();
+    this.releaseGameplayKeyboard();
     this.ui.showResult(won, this.playerRounds, this.botRounds);
   }
 
   applyOnlineSnapshot(state, initial = false) {
-    if (!state?.players?.length || this.matchType !== 'online') return;
-    const local = state.players[this.onlineSlot];
-    const remote = state.players[this.onlineSlot === 0 ? 1 : 0];
-    if (!local || !remote) return;
+    if (!state?.players?.length || !isOnlineArenaMatchType(this.matchType)) return;
+    const teamMode = isArena2v2MatchType(this.matchType);
+    const local = state.players.find(
+      (player) => Number(player.slot) === this.onlineSlot,
+    );
+    const remote = teamMode
+      ? null
+      : state.players.find((player) => Number(player.slot) !== this.onlineSlot);
+    if (!local || (!teamMode && !remote)) return;
     const roundChanged =
       this.onlineRoundLoaded !== state.roundNumber ||
       this.onlineMapLoaded !== state.mapIndex;
     if (roundChanged) this.loadOnlineRound(state);
 
     const previousPhase = this.phase;
-    this.arenaScoreboardStats = observedArenaStats(
-      this.onlineSnapshot,
-      state,
-      this.arenaScoreboardStats,
-    );
+    this.arenaScoreboardStats = teamMode
+      ? state.players.map((player) => ({
+          kills: player.kills ?? 0,
+          deaths: player.deaths ?? 0,
+          assists: player.assists ?? 0,
+        }))
+      : observedArenaStats(
+          this.onlineSnapshot,
+          state,
+          this.arenaScoreboardStats,
+        );
     this.onlineSnapshot = state;
     this.phase = state.phase;
     this.roundNumber = state.roundNumber;
     this.takeNumber = state.takeNumber;
     this.takeTime = Math.max(0, state.remaining / 1000);
     this.overtime = Boolean(state.overtime);
-    this.playerRounds = state.rounds[this.onlineSlot];
-    this.botRounds = state.rounds[this.onlineSlot === 0 ? 1 : 0];
-    this.playerTakes = state.takes[this.onlineSlot];
-    this.botTakes = state.takes[this.onlineSlot === 0 ? 1 : 0];
+    const scoreIndex = teamMode ? this.onlineTeam : this.onlineSlot;
+    this.playerRounds = state.rounds[scoreIndex];
+    this.botRounds = state.rounds[1 - scoreIndex];
+    this.playerTakes = state.takes[scoreIndex];
+    this.botTakes = state.takes[1 - scoreIndex];
 
     const respawned =
       !roundChanged &&
@@ -1294,9 +1465,14 @@ export class Game {
       this.rendering.setDamage(0.16);
     }
 
-    this.remote.push(remote);
-    this.remote.applyImmediate(remote);
+    if (teamMode) {
+      this.warCrowd.applySnapshot(state.players, performance.now());
+    } else {
+      this.remote.push(remote);
+      this.remote.applyImmediate(remote);
+    }
     this.syncOnlinePickups(state.pickups);
+    this.syncOnlineProjectiles(state.projectiles ?? []);
     this.updateOnlinePhasePresentation(previousPhase, state, initial);
     this.updateHUD(true);
     this.refreshScoreboard();
@@ -1350,6 +1526,8 @@ export class Game {
 
   handleOnlineEvent(message) {
     if (!message?.event) return;
+    const teamMode = isArena2v2MatchType(this.matchType);
+    const scoreIndex = teamMode ? this.onlineTeam : this.onlineSlot;
     if (message.event === 'shot') {
       this.handleOnlineShot(message);
     } else if (message.event === 'pickup') {
@@ -1360,7 +1538,7 @@ export class Game {
         this.player.equip('knives', false);
         this.player.ammo = message.ammo;
         this.player.reserve = message.reserve ?? this.player.definition.reserve;
-      } else {
+      } else if (!teamMode) {
         this.bot.equip('knives');
         this.bot.ammo = message.ammo;
         this.bot.reserve = message.reserve ?? WEAPONS.knives.reserve;
@@ -1370,13 +1548,13 @@ export class Game {
         if (!this.player.reloading) this.player.startReload(true);
         this.player.reloadDuration = Number(message.duration || this.player.definition.reloadMs) / 1000;
         this.player.reloadRemaining = this.player.reloadDuration;
-      } else {
+      } else if (!teamMode) {
         this.bot.reloading = true;
       }
     } else if (message.event === 'reload_complete') {
       if (message.player === this.onlineSlot) {
         this.player.finishReload(message.ammo, message.reserve);
-      } else {
+      } else if (!teamMode) {
         this.bot.ammo = message.ammo;
         this.bot.reserve = message.reserve;
         this.bot.reloading = false;
@@ -1384,7 +1562,7 @@ export class Game {
     } else if (message.event === 'explosion') {
       this.handleOnlineExplosion(message);
     } else if (message.event === 'take_end') {
-      const won = message.winner === this.onlineSlot;
+      const won = message.winner === scoreIndex;
       const draw = message.winner == null;
       this.player.inputEnabled = false;
       this.ui.showAnnouncement(
@@ -1392,16 +1570,16 @@ export class Game {
         draw ? 'Draw' : won ? 'Point won' : 'Point lost',
         draw
           ? ''
-          : `${message.takes[this.onlineSlot]}–${message.takes[this.onlineSlot === 0 ? 1 : 0]}`,
+          : `${message.takes[scoreIndex]}–${message.takes[1 - scoreIndex]}`,
       );
       this.audio.roundResult(won && !draw);
       if (!won && !draw) this.player.viewRoot.visible = false;
     } else if (message.event === 'round_end') {
-      const won = message.winner === this.onlineSlot;
+      const won = message.winner === scoreIndex;
       this.ui.showAnnouncement(
         'Match',
         won ? 'Round won' : 'Round lost',
-        `${message.rounds[this.onlineSlot]}–${message.rounds[this.onlineSlot === 0 ? 1 : 0]}`,
+        `${message.rounds[scoreIndex]}–${message.rounds[1 - scoreIndex]}`,
       );
       this.audio.roundResult(won);
     } else if (message.event === 'match_end') {
@@ -1409,21 +1587,34 @@ export class Game {
     } else if (message.event === 'overtime') {
       this.ui.showAnnouncement(`Round ${this.roundNumber}`, 'Overtime');
       window.setTimeout(() => {
-        if (this.matchType === 'online' && this.overtime) this.ui.hideAnnouncement();
+        if (isOnlineArenaMatchType(this.matchType) && this.overtime) {
+          this.ui.hideAnnouncement();
+        }
       }, 950);
       this.audio.countdown(0);
     } else if (message.event === 'overtime_damage') {
       const health = message.health[this.onlineSlot];
       if (health < this.player.health) {
-        this.damagePlayer(this.player.health - health, this.bot.position, false);
+        const source = teamMode
+          ? this.onlineSnapshot?.players?.find(
+              (player) => player.team !== this.onlineTeam && !player.dead,
+            )?.position
+          : null;
+        this.damagePlayer(
+          this.player.health - health,
+          source ? new THREE.Vector3().fromArray(source) : this.bot.position,
+          false,
+        );
       }
       this.player.health = health;
-      const opponentHealth = message.health[this.onlineSlot === 0 ? 1 : 0];
-      if (opponentHealth < this.bot.health) this.bot.flashHit = 0.1;
-      this.bot.health = opponentHealth;
-      if (opponentHealth <= 0) this.bot.dead = true;
-      this.bot.updateFighterState();
-      this.bot.updateHealthBar();
+      if (!teamMode) {
+        const opponentHealth = message.health[1 - this.onlineSlot];
+        if (opponentHealth < this.bot.health) this.bot.flashHit = 0.1;
+        this.bot.health = opponentHealth;
+        if (opponentHealth <= 0) this.bot.dead = true;
+        this.bot.updateFighterState();
+        this.bot.updateHealthBar();
+      }
     } else if (message.event === 'opponent_disconnected') {
       const localDrop = message.player === this.onlineSlot;
       this.ui.showConnectionOverlay(
@@ -1441,6 +1632,7 @@ export class Game {
   handleOnlineShot(message) {
     const definition = WEAPONS[message.weapon];
     if (!definition) return;
+    const teamMode = isArena2v2MatchType(this.matchType);
     const localShot = message.shooter === this.onlineSlot;
     if (message.projectile) {
       this.spawnOnlineProjectile(message);
@@ -1451,25 +1643,81 @@ export class Game {
       if (message.hit) {
         this.ui.showHit(message.headshot, this.elapsed);
         this.audio.impact(true, message.headshot);
-        const damagePosition = message.hitPoint
-          ? new THREE.Vector3().fromArray(message.hitPoint)
-          : this.bot.getHeadCenter(new THREE.Vector3());
-        damagePosition.y += 0.28;
-        this.vfx.spawnDamageNumber(damagePosition, message.damage, {
-          headshot: message.headshot,
-        });
-        if (message.hitPoint) {
+        const hits = teamMode && Array.isArray(message.hits) && message.hits.length
+          ? message.hits
+          : [{
+              damage: message.damage,
+              headshot: message.headshot,
+              hitPoint: message.hitPoint,
+            }];
+        for (const hit of hits) {
+          const damagePosition = hit.hitPoint
+            ? new THREE.Vector3().fromArray(hit.hitPoint)
+            : this.bot.getHeadCenter(new THREE.Vector3());
+          damagePosition.y += 0.28;
+          this.vfx.spawnDamageNumber(damagePosition, hit.damage, {
+            headshot: hit.headshot,
+          });
+          if (!hit.hitPoint) continue;
           this.vfx.spawnBloodImpact(
-            new THREE.Vector3().fromArray(message.hitPoint),
+            new THREE.Vector3().fromArray(hit.hitPoint),
             new THREE.Vector3().fromArray(message.direction).multiplyScalar(0.7),
-            message.headshot,
+            hit.headshot,
           );
         }
-        this.bot.health = message.targetHealth;
-        this.bot.flashHit = 0.1;
-        if (message.targetHealth <= 0) this.bot.dead = true;
-        this.bot.updateFighterState();
-        this.bot.updateHealthBar();
+        if (!teamMode) {
+          this.bot.health = message.targetHealth;
+          this.bot.flashHit = 0.1;
+          if (message.targetHealth <= 0) this.bot.dead = true;
+          this.bot.updateFighterState();
+          this.bot.updateHealthBar();
+        }
+      }
+      return;
+    }
+
+    if (teamMode) {
+      const shooter = this.onlineSnapshot?.players?.find(
+        (player) => Number(player.slot) === Number(message.shooter),
+      );
+      const source = shooter?.position
+        ? new THREE.Vector3().fromArray(shooter.position)
+        : new THREE.Vector3().fromArray(message.origin ?? [0, 0, 0]);
+      const muzzle = new THREE.Vector3().fromArray(
+        message.origin ?? [source.x, source.y + 1.35, source.z],
+      );
+      const direction = new THREE.Vector3().fromArray(message.direction).normalize();
+      this.audio.gun(definition.sound, this.getPan(muzzle), true);
+      this.vfx.spawnMuzzle(
+        muzzle,
+        direction,
+        magicColor(definition),
+        magicPower(definition, 0.9),
+        definition.id,
+      );
+      if (!message.projectile) {
+        const traces = message.traces?.slice(
+          0,
+          definition.id === 'ember' ? 5 : definition.id === 'greatsword' ? 2 : 1,
+        ) ?? [];
+        for (let traceIndex = 0; traceIndex < traces.length; traceIndex += 1) {
+          showWeaponTrail(
+            this.vfx,
+            muzzle,
+            new THREE.Vector3().fromArray(traces[traceIndex]),
+            definition,
+            traceIndex,
+          );
+        }
+      }
+      const localHit = message.hits?.find(
+        (hit) => Number(hit.target) === this.onlineSlot,
+      ) ?? (Number(message.target) === this.onlineSlot
+        ? { damage: message.damage, health: message.targetHealth, headshot: message.headshot }
+        : null);
+      if (localHit?.damage > 0) {
+        this.damagePlayer(localHit.damage, source, localHit.headshot);
+        this.player.health = localHit.health;
       }
       return;
     }
@@ -1525,7 +1773,7 @@ export class Game {
       this.player.equip(message.weapon);
       this.player.ammo = message.ammo;
       this.player.reserve = message.reserve ?? this.player.definition.reserve;
-    } else {
+    } else if (!isArena2v2MatchType(this.matchType)) {
       this.bot.equip(message.weapon);
       this.bot.ammo = message.ammo;
       this.bot.reserve = message.reserve ?? WEAPONS[message.weapon].reserve;
@@ -1560,7 +1808,37 @@ export class Game {
     this.onlineProjectiles.set(message.projectile.id, projectile);
   }
 
+  syncOnlineProjectiles(states = []) {
+    const active = new Set();
+    for (const state of states) {
+      if (!state || state.id == null || !Array.isArray(state.position)) continue;
+      active.add(state.id);
+      const existing = this.onlineProjectiles.get(state.id);
+      if (!existing) {
+        this.spawnOnlineProjectile({
+          shooter: state.owner,
+          weapon: state.weapon,
+          projectile: {
+            id: state.id,
+            position: state.position,
+            velocity: state.velocity,
+          },
+        });
+        continue;
+      }
+      existing.position.lerp(new THREE.Vector3().fromArray(state.position), 0.45);
+      existing.velocity.fromArray(state.velocity);
+    }
+    for (const [id, projectile] of this.onlineProjectiles) {
+      if (active.has(id)) continue;
+      const index = this.projectiles.indexOf(projectile);
+      if (index >= 0) this.removeProjectile(index);
+      this.onlineProjectiles.delete(id);
+    }
+  }
+
   handleOnlineExplosion(message) {
+    const teamMode = isArena2v2MatchType(this.matchType);
     const projectile = this.onlineProjectiles.get(message.projectileId);
     const position = new THREE.Vector3().fromArray(message.position);
     if (projectile) {
@@ -1579,7 +1857,7 @@ export class Game {
         this.damagePlayer(entry.amount, position, false);
         this.player.health = entry.health;
         this.player.velocity.add(new THREE.Vector3().fromArray(entry.impulse));
-      } else {
+      } else if (!teamMode) {
         this.bot.health = entry.health;
         this.bot.flashHit = Math.max(this.bot.flashHit, 0.1);
         if (entry.health <= 0) this.bot.dead = true;
@@ -1594,20 +1872,34 @@ export class Game {
             entry.amount,
           );
         }
+      } else if (message.owner === this.onlineSlot) {
+        this.ui.showHit(false, this.elapsed);
+        this.audio.impact(true, false);
+        const target = this.onlineSnapshot?.players?.find(
+          (player) => Number(player.slot) === Number(entry.player),
+        );
+        const targetPosition = target?.position
+          ? new THREE.Vector3().fromArray(target.position).add(new THREE.Vector3(0, 1.2, 0))
+          : position.clone();
+        this.vfx.spawnDamageNumber(targetPosition, entry.amount);
       }
     }
   }
 
   showOnlineResult(winner, rounds, reason = 'score') {
     if (this.mode === 'result') return;
-    const won = winner === this.onlineSlot;
+    const scoreIndex = isArena2v2MatchType(this.matchType)
+      ? this.onlineTeam
+      : this.onlineSlot;
+    const won = winner === scoreIndex;
     this.mode = 'result';
     this.phase = 'result';
     this.player.inputEnabled = false;
     this.player.viewRoot.visible = false;
     if (document.pointerLockElement) document.exitPointerLock();
-    const localRounds = rounds[this.onlineSlot];
-    const remoteRounds = rounds[this.onlineSlot === 0 ? 1 : 0];
+    this.releaseGameplayKeyboard();
+    const localRounds = rounds[scoreIndex];
+    const remoteRounds = rounds[1 - scoreIndex];
     this.playerRounds = localRounds;
     this.botRounds = remoteRounds;
     this.ui.resetRematchButton();
@@ -1812,7 +2104,11 @@ export class Game {
       !this.onlinePaused &&
       !this.player.dead;
     this.lastMovement = this.player.update(delta, canMove);
-    this.remote.update(delta);
+    if (isArena2v2MatchType(this.matchType)) {
+      this.warCrowd?.update(this.camera, delta);
+    } else {
+      this.remote.update(delta);
+    }
     if (this.lastMovement.reload && canMove) this.startPlayerReload(true);
 
     if (canMove) {
@@ -1872,7 +2168,7 @@ export class Game {
       this.updateWar(delta);
       return;
     }
-    if (this.matchType === 'online') {
+    if (isOnlineArenaMatchType(this.matchType)) {
       this.updateOnline(delta);
       return;
     }
@@ -2117,7 +2413,9 @@ export class Game {
             (this.player.grounded ? 1 : 1.42) *
             (1 + clamp(this.lastMovement.speed / 12, 0, 0.3));
         const shotDirection = spreadDirection(direction, spread);
-        const result = this.traceAgainstBot(origin, shotDirection, definition.range);
+        const result = isArena2v2MatchType(this.matchType)
+          ? this.traceAgainstArenaTeam(origin, shotDirection, definition.range)
+          : this.traceAgainstBot(origin, shotDirection, definition.range);
         if (result.kind === 'world') {
           this.vfx.spawnImpact(result.point, result.normal, {
             count: definition.id === 'lightning' ? 18 : definition.id === 'ember' ? 3 : 7,
@@ -2233,6 +2531,63 @@ export class Game {
           normal: direction.clone().negate(),
         };
       }
+    }
+    if (worldHit) {
+      return {
+        kind: 'world',
+        distance: worldHit.distance,
+        point: worldHit.point.clone(),
+        normal: worldHit.normal,
+      };
+    }
+    return {
+      kind: 'miss',
+      distance: range,
+      point: origin.clone().addScaledVector(direction, range),
+      normal: direction.clone().negate(),
+    };
+  }
+
+  traceAgainstArenaTeam(origin, direction, range) {
+    const worldHit = this.arena.raycast(origin, direction, range);
+    let closestDistance = worldHit?.distance ?? range;
+    let headshot = false;
+    for (const target of this.onlineSnapshot?.players ?? []) {
+      if (
+        Number(target.slot) === this.onlineSlot ||
+        Number(target.team) === this.onlineTeam ||
+        target.dead
+      ) continue;
+      const position = new THREE.Vector3().fromArray(target.position);
+      const headDistance = raySphereDistance(
+        origin,
+        direction,
+        position.clone().add(new THREE.Vector3(0, CHARACTER_HITBOX.head.offsetY, 0)),
+        CHARACTER_HITBOX.head.radius,
+      );
+      const bodyDistance = raySphereDistance(
+        origin,
+        direction,
+        position.clone().add(new THREE.Vector3(0, CHARACTER_HITBOX.body.offsetY, 0)),
+        CHARACTER_HITBOX.body.radius,
+      );
+      if (headDistance != null && headDistance < closestDistance) {
+        closestDistance = headDistance;
+        headshot = true;
+      }
+      if (bodyDistance != null && bodyDistance < closestDistance) {
+        closestDistance = bodyDistance;
+        headshot = false;
+      }
+    }
+    if (closestDistance < (worldHit?.distance ?? range)) {
+      return {
+        kind: 'bot',
+        distance: closestDistance,
+        headshot,
+        point: origin.clone().addScaledVector(direction, closestDistance),
+        normal: direction.clone().negate(),
+      };
     }
     if (worldHit) {
       return {

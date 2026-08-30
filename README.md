@@ -22,6 +22,10 @@ lag-compensated hit registration, and a 20-second reconnect hold follow the
 real-time multiplayer conventions used on herm.cool. A complete practice
 match against the Questmaster bot is also available from the title screen.
 
+Arena 2v2 uses the same Battle Village map, pickups, takes, and rounds with
+two teams of two. Server-controlled bots fill open team slots immediately,
+and joining players replace them without interrupting the match.
+
 Win two takes to claim a round and four rounds to win the match.
 
 War has two separate 20v20 matches on a 240-by-200 open field. Humans choose a

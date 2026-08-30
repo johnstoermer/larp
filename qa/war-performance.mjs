@@ -76,6 +76,25 @@ async function collectHeap(cdp) {
   return cdp.send('Runtime.getHeapUsage');
 }
 
+async function releaseGameplayFullscreenForResize(page, viewport) {
+  await page.evaluate(async () => {
+    const game = window.__LARP_GAME__;
+    game?.releaseGameplayKeyboard();
+    if (document.fullscreenElement && typeof document.exitFullscreen === 'function') {
+      try {
+        await document.exitFullscreen();
+      } catch {
+        // The game's asynchronous release may win the fullscreen-exit race.
+      }
+    }
+  });
+  await page.waitForFunction(() => document.fullscreenElement == null, null, {
+    timeout: 5_000,
+  });
+  await page.setViewportSize(viewport);
+  await page.evaluate(() => window.__LARP_GAME__?.ui.hidePause());
+}
+
 const browser = await launchChromium({
   forceSoftwareWebgl: false,
   args: [
@@ -108,6 +127,7 @@ try {
     return game?.matchType === 'war' &&
       game.warSnapshot?.combatants?.length === combatantCount;
   }, WAR_COMBATANT_COUNT, { timeout: 20_000 });
+  await releaseGameplayFullscreenForResize(page, viewports.desktop);
 
   const harness = await page.evaluate(({ combatantCount, teamSize }) => {
     const game = window.__LARP_GAME__;

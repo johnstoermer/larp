@@ -1,9 +1,9 @@
 # War mode
 
 War has two separate 20-versus-20 variants on one large map: Control and Team
-Deathmatch. Arena remains the existing one-versus-one mode and shares protocol
-version 6, while retaining its queue, maps, weapons, pickups, rounds, and
-reconnect behavior.
+Deathmatch. Arena offers one-versus-one and two-versus-two matches on its
+existing maps and rules, and shares protocol version 7 while retaining its
+weapons, pickups, rounds, and reconnect behavior.
 
 ## Rules and source basis
 

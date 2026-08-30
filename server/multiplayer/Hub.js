@@ -8,6 +8,11 @@ import {
 import { Room } from './Room.js';
 import { WarRoom } from './WarRoom.js';
 import {
+  ARENA_2V2_COMBATANT_COUNT,
+  ARENA_2V2_MODE,
+  arena2v2TeamForSlot,
+} from '../../shared/arena2v2Config.js';
+import {
   WAR_MODE_CONTROL,
   WAR_MODE_IDS,
   WAR_RULES,
@@ -71,6 +76,20 @@ function normalizeRoomCode(value) {
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, '')
     .slice(0, 5);
+}
+
+function createArena2v2BotSession(slot) {
+  return {
+    token: `arena-bot-${randomUUID()}`,
+    name: `Bot ${slot + 1}`,
+    bot: true,
+    room: null,
+    slot,
+    team: arena2v2TeamForSlot(slot),
+    connected: false,
+    send() {},
+    sendEncoded() {},
+  };
 }
 
 export class MultiplayerHub {
@@ -401,6 +420,10 @@ export class MultiplayerHub {
       this.joinQuickQueue(session);
       return;
     }
+    if (message.type === 'arena_2v2_play') {
+      this.joinArena2v2(session, now);
+      return;
+    }
     if (message.type === 'war_play') {
       this.joinWar(
         session,
@@ -476,6 +499,46 @@ export class MultiplayerHub {
       position: this.quickQueue.length,
       online: this.connectedCount,
     });
+  }
+
+  joinArena2v2(session, now = Date.now()) {
+    if (session.room) return;
+    this.removeFromQueues(session);
+    let room = [...this.rooms].find((candidate) =>
+      candidate.mode === ARENA_2V2_MODE && candidate.canJoin(now)
+    );
+    if (!room) {
+      const arenaRoomCount = [...this.rooms].filter(
+        (candidate) => candidate.mode !== 'war',
+      ).length;
+      if (arenaRoomCount >= MAX_ARENA_ROOMS) {
+        this.send(session, {
+          type: 'error',
+          code: 'ARENA_CAPACITY',
+          message: 'Arena is at capacity. Try again shortly.',
+        });
+        return;
+      }
+      const sessions = [session];
+      for (let slot = 1; slot < ARENA_2V2_COMBATANT_COUNT; slot += 1) {
+        sessions.push(createArena2v2BotSession(slot));
+      }
+      room = new Room({
+        sessions,
+        teamMode: true,
+        rules: this.roomRules,
+        now,
+      });
+      this.rooms.add(room);
+      return;
+    }
+    if (!room.addSession(session, now)) {
+      this.send(session, {
+        type: 'error',
+        code: 'ARENA_FULL',
+        message: 'Arena 2v2 is full. Try again.',
+      });
+    }
   }
 
   joinWar(
@@ -709,6 +772,7 @@ export class MultiplayerHub {
     const rooms = [...this.rooms];
     const warRooms = rooms.filter((room) => room.mode === 'war');
     const arenaRooms = rooms.filter((room) => room.mode !== 'war');
+    const arena2v2Rooms = rooms.filter((room) => room.mode === ARENA_2V2_MODE);
     return {
       status: 'ok',
       protocol: PROTOCOL_VERSION,
@@ -718,6 +782,11 @@ export class MultiplayerHub {
       privateLobbies: this.privateLobbies.size,
       rooms: this.rooms.size,
       arenaRooms: arenaRooms.length,
+      arena2v2Rooms: arena2v2Rooms.length,
+      arena2v2Humans: arena2v2Rooms.reduce(
+        (total, room) => total + room.connectedHumans().length,
+        0,
+      ),
       warRooms: warRooms.length,
       warRoomsByMode: Object.fromEntries(WAR_MODE_IDS.map((warMode) => [
         warMode,

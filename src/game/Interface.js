@@ -112,16 +112,24 @@ export class Interface {
   }
 
   setSelectedMode(mode) {
-    const selected = mode === 'war-tdm' ? 'war-tdm' : mode === 'war' ? 'war' : 'arena';
-    const war = selected !== 'arena';
+    const selected = mode === 'war-tdm'
+      ? 'war-tdm'
+      : mode === 'war'
+        ? 'war'
+        : mode === 'arena-2v2'
+          ? 'arena-2v2'
+          : 'arena';
+    const war = selected === 'war' || selected === 'war-tdm';
     this.gameMode.value = selected;
     this.warClassField.classList.toggle('hidden', !war);
-    this.arenaActions.classList.toggle('hidden', war);
+    this.arenaActions.classList.toggle('hidden', selected !== 'arena');
     this.onlineButton.textContent = selected === 'war-tdm'
       ? 'Join Team Deathmatch'
       : selected === 'war'
         ? 'Join Control'
-        : 'Quick Match';
+        : selected === 'arena-2v2'
+          ? 'Join Arena 2v2'
+          : 'Quick Match';
   }
 
   showTitle() {
@@ -194,14 +202,16 @@ export class Interface {
     );
   }
 
-  setOnlineMatch(active, opponent = 'Computer') {
+  setOnlineMatch(active, opponent = 'Computer', forfeit = true) {
     this.onlineMatch = active;
     this.currentOpponent = opponent || 'Opponent';
     this.opponentName.textContent = this.currentOpponent;
     this.resultOpponentName.textContent = this.currentOpponent;
     this.networkMeter.classList.toggle('hidden', !active);
     this.restartButton.classList.toggle('hidden', active);
-    this.quitButton.textContent = active ? 'Forfeit and Quit' : 'Quit to Menu';
+    this.quitButton.textContent = active && forfeit
+      ? 'Forfeit and Quit'
+      : 'Quit to Menu';
   }
 
   setWarMatch(active, team = 0, warMode = this.warMode) {

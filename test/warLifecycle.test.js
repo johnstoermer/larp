@@ -58,7 +58,7 @@ function socket(readyState = 1, extensions = 'permessage-deflate') {
 }
 
 test('client and server advertise the same multiplayer protocol', () => {
-  assert.equal(PROTOCOL_VERSION, 6);
+  assert.equal(PROTOCOL_VERSION, 7);
   assert.equal(CLIENT_PROTOCOL_VERSION, PROTOCOL_VERSION);
 });
 
