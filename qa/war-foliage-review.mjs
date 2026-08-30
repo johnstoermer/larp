@@ -1,8 +1,35 @@
 import { mkdir, writeFile } from 'node:fs/promises';
+import { WAR_MAP } from '../shared/warConfig.js';
 import { launchChromium, pathFromUrl } from './browser.mjs';
 
 const baseUrl = process.env.LARP_URL || 'http://127.0.0.1:8080';
 const output = new URL('../artifacts/war-foliage/', import.meta.url);
+const expectedFoliage = WAR_MAP.foliage;
+const expectedAssets = [...new Set(expectedFoliage.map(({ asset }) => asset))];
+const expectedBottomRatioByAsset = new Map(expectedAssets.map((asset) => {
+  const ratios = new Set(expectedFoliage
+    .filter((item) => item.asset === asset)
+    .map((item) => item.visibleBottomRatio ?? 0));
+  assert(ratios.size === 1, `${asset} has inconsistent authored bottom anchors`);
+  return [asset, [...ratios][0]];
+}));
+const minimumBusyFoliageCount = 100;
+
+function nearestFoliage(type, target) {
+  const candidates = expectedFoliage.filter((item) => item.type.includes(type));
+  return candidates.reduce((nearest, item) => {
+    if (!nearest) return item;
+    const distance = Math.hypot(item.position[0] - target[0], item.position[2] - target[1]);
+    const nearestDistance = Math.hypot(
+      nearest.position[0] - target[0],
+      nearest.position[2] - target[1],
+    );
+    return distance < nearestDistance ? item : nearest;
+  }, null);
+}
+
+const reviewBush = nearestFoliage('bush', [51, 23]);
+const reviewTree = nearestFoliage('tree', [56, 91]);
 await mkdir(output, { recursive: true });
 
 const browser = await launchChromium();
@@ -21,8 +48,18 @@ function assert(condition, message) {
 }
 
 async function capture(name, camera) {
-  await page.evaluate(({ position, target, up, fov, fogDensity = 0.0048 }) => {
+  await page.evaluate(({
+    position,
+    target,
+    up,
+    fov,
+    fogDensity = 0.0048,
+    isolatedName = null,
+  }) => {
     const game = window.__LARP_GAME__;
+    for (const cutout of game.warArena.foliageCutouts) {
+      cutout.visible = !isolatedName || cutout.name === isolatedName;
+    }
     if (game.scene.fog && 'density' in game.scene.fog) game.scene.fog.density = fogDensity;
     game.camera.position.set(...position);
     game.camera.up.set(...up);
@@ -35,6 +72,13 @@ async function capture(name, camera) {
   await page.waitForTimeout(300);
   const path = pathFromUrl(new URL(`${name}.png`, output));
   await page.locator('#world').screenshot({ path });
+  if (camera.isolatedName) {
+    await page.evaluate(() => {
+      for (const cutout of window.__LARP_GAME__.warArena.foliageCutouts) {
+        cutout.visible = true;
+      }
+    });
+  }
   return path;
 }
 
@@ -63,17 +107,17 @@ try {
     game.mode = 'war-foliage-review';
     game.phase = 'review';
   });
-  await page.waitForFunction(() => {
+  await page.waitForFunction((expectedCount) => {
     const cutouts = window.__LARP_GAME__?.warArena?.foliageCutouts ?? [];
-    return cutouts.length === 28 && cutouts.every((cutout) =>
+    return cutouts.length === expectedCount && cutouts.every((cutout) =>
       cutout.children.length === 2 &&
       cutout.children.every((plane) => {
         const image = plane.material?.map?.image;
         return image?.complete && image.naturalWidth > 0;
       }));
-  });
+  }, expectedFoliage.length);
 
-  const assetReport = await page.evaluate(async () => {
+  const assetReport = await page.evaluate(async (assetUrls) => {
     async function analyze(relative) {
       const image = new Image();
       image.src = relative;
@@ -169,20 +213,22 @@ try {
       };
     }
 
-    return Promise.all([
-      analyze('/assets/larp/war/tree.webp'),
-      analyze('/assets/larp/war/bush.webp'),
-    ]);
-  });
+    return Promise.all(assetUrls.map(analyze));
+  }, expectedAssets);
 
   for (const asset of assetReport) {
     assert(asset.alpha.transparentRatio > 0.2, `${asset.relative} has no useful alpha field`);
     assert(asset.edgeMaximum.top === 0, `${asset.relative} clips the top edge`);
     assert(asset.edgeMaximum.left === 0, `${asset.relative} clips the left edge`);
     assert(asset.edgeMaximum.right === 0, `${asset.relative} clips the right edge`);
+    assert(asset.margins.top >= 1, `${asset.relative} has no transparent top framing`);
+    assert(asset.margins.left >= 1, `${asset.relative} has no transparent left framing`);
+    assert(asset.margins.right >= 1, `${asset.relative} has no transparent right framing`);
+    const actualBottomRatio = asset.margins.bottom / asset.size[1];
+    const expectedBottomRatio = expectedBottomRatioByAsset.get(asset.relative) ?? 0;
     assert(
-      asset.margins.bottom <= 2,
-      `${asset.relative} floats ${asset.margins.bottom}px above its ground edge`,
+      Math.abs(actualBottomRatio - expectedBottomRatio) <= 0.006,
+      `${asset.relative} bottom anchor ${actualBottomRatio.toFixed(4)} does not match authored ${expectedBottomRatio.toFixed(4)}`,
     );
     assert(
       Object.values(asset.cornerMaximum).every((alpha) => alpha === 0),
@@ -194,7 +240,7 @@ try {
     );
   }
 
-  const geometryBefore = await page.evaluate(() => {
+  const geometryBefore = await page.evaluate((mapBounds) => {
     const arena = window.__LARP_GAME__.warArena;
     return arena.foliageCutouts.map((cutout) => {
       const [first, second] = cutout.children;
@@ -215,21 +261,38 @@ try {
         materialIds: cutout.children.map((plane) => plane.material.uuid),
         mapIds: cutout.children.map((plane) => plane.material.map?.uuid),
         size: [width, height],
-        worldBaseY: cutout.position.y + first.position.y - height / 2,
+        worldPlaneBaseY: cutout.position.y + first.position.y - height / 2,
         fieldClearance: {
-          x: 120 - (Math.abs(cutout.position.x) + width / 2),
-          z: 100 - (Math.abs(cutout.position.z) + width / 2),
+          x: mapBounds.x - (Math.abs(cutout.position.x) + width / 2),
+          z: mapBounds.z - (Math.abs(cutout.position.z) + width / 2),
         },
       };
     });
-  });
+  }, WAR_MAP.bounds);
 
-  assert(geometryBefore.length === 28, `expected 28 foliage props, found ${geometryBefore.length}`);
+  assert(
+    geometryBefore.length === expectedFoliage.length,
+    `expected ${expectedFoliage.length} authored foliage props, found ${geometryBefore.length}`,
+  );
+  assert(
+    geometryBefore.length >= minimumBusyFoliageCount,
+    `War still looks sparse: expected at least ${minimumBusyFoliageCount} foliage props, found ${geometryBefore.length}`,
+  );
   assert(
     new Set(geometryBefore.map(({ name }) => name)).size === geometryBefore.length,
     'foliage instance positions/names are not unique',
   );
+  const authoredByName = new Map(
+    expectedFoliage.map((item) => [`war-${item.id}`, item]),
+  );
   for (const cutout of geometryBefore) {
+    const authored = authoredByName.get(cutout.name);
+    assert(authored, `${cutout.name} is not present in WAR_MAP.foliage`);
+    assert(cutout.asset === authored.asset, `${cutout.name} rendered the wrong asset`);
+    assert(
+      JSON.stringify(cutout.position) === JSON.stringify(authored.position),
+      `${cutout.name} moved away from its authored position`,
+    );
     assert(cutout.type === 'Group', `${cutout.name} is not a Group`);
     assert(cutout.childCount === 2, `${cutout.name} does not have exactly two planes`);
     assert(cutout.childTypes.every((type) => type === 'Mesh'), `${cutout.name} contains a billboard/Sprite`);
@@ -239,7 +302,12 @@ try {
     assert(new Set(cutout.materialIds).size === 1, `${cutout.name} planes do not share identical material`);
     assert(new Set(cutout.mapIds).size === 1, `${cutout.name} planes do not share one texture`);
     assert(cutout.childScales.every((scale) => scale.every((value) => value === 1)), `${cutout.name} plane is warped`);
-    assert(Math.abs(cutout.worldBaseY) < 1e-9, `${cutout.name} floats above or sinks below the ground`);
+    const worldVisibleBaseY = cutout.worldPlaneBaseY +
+      cutout.size[1] * (authored.visibleBottomRatio ?? 0);
+    assert(
+      Math.abs(worldVisibleBaseY) < 1e-8,
+      `${cutout.name} visible pixels float above or sink below the ground`,
+    );
     assert(cutout.fieldClearance.x >= 0 && cutout.fieldClearance.z >= 0, `${cutout.name} clips the field boundary`);
   }
   let minimumInstanceGap = Infinity;
@@ -255,24 +323,40 @@ try {
       minimumInstanceGap = Math.min(minimumInstanceGap, footprintGap);
     }
   }
-  assert(minimumInstanceGap > 0, `foliage footprints overlap by ${-minimumInstanceGap}`);
+  assert(
+    minimumInstanceGap > -Math.max(...geometryBefore.map(({ size }) => size[0])) * 0.85,
+    `foliage contains a near-duplicate overlap of ${-minimumInstanceGap}`,
+  );
+
+  const quadrantCounts = {
+    northWest: geometryBefore.filter(({ position }) => position[0] < 0 && position[2] < 0).length,
+    northEast: geometryBefore.filter(({ position }) => position[0] >= 0 && position[2] < 0).length,
+    southWest: geometryBefore.filter(({ position }) => position[0] < 0 && position[2] >= 0).length,
+    southEast: geometryBefore.filter(({ position }) => position[0] >= 0 && position[2] >= 0).length,
+  };
+  assert(
+    Object.values(quadrantCounts).every((count) => count >= 15),
+    `foliage density is lopsided across the battlefield: ${JSON.stringify(quadrantCounts)}`,
+  );
 
   const screenshots = {};
   screenshots.eyeLevelBush = await capture('eye-level-bush-close', {
-    position: [80, 1.68, -8],
-    target: [90, 1.7, -18],
+    position: [reviewBush.position[0] - 8, 1.68, reviewBush.position[2] - 6],
+    target: [reviewBush.position[0], reviewBush.height * 0.42, reviewBush.position[2]],
     up: [0, 1, 0],
     fov: 52,
+    isolatedName: `war-${reviewBush.id}`,
   });
   screenshots.eyeLevelTree = await capture('eye-level-tree-close', {
-    position: [98, 1.68, -24],
-    target: [108, 5.3, -34],
+    position: [reviewTree.position[0] - 10, 1.68, reviewTree.position[2] - 8],
+    target: [reviewTree.position[0], reviewTree.height * 0.48, reviewTree.position[2]],
     up: [0, 1, 0],
     fov: 52,
+    isolatedName: `war-${reviewTree.id}`,
   });
   screenshots.eyeLevelCluster = await capture('eye-level-east-cluster', {
-    position: [48, 2.15, -20],
-    target: [90, 3, -50],
+    position: [42, 2.15, 15],
+    target: [78, 3, 27],
     up: [0, 1, 0],
     fov: 75,
   });
@@ -286,16 +370,18 @@ try {
     fogDensity: 0.0005,
   });
   screenshots.overheadBushCross = await capture('overhead-bush-cross', {
-    position: [96, 25, -12],
-    target: [90, 0, -18],
-    up: [1, 0, 1],
-    fov: 34,
+    position: [reviewBush.position[0] + 6, 10, reviewBush.position[2] + 4],
+    target: [reviewBush.position[0], 1.2, reviewBush.position[2]],
+    up: [0, 1, 0],
+    fov: 30,
+    isolatedName: `war-${reviewBush.id}`,
   });
   screenshots.overheadTreeCross = await capture('overhead-tree-cross', {
-    position: [114, 38, -28],
-    target: [108, 0, -34],
-    up: [1, 0, 1],
-    fov: 32,
+    position: [reviewTree.position[0] + 8, 18, reviewTree.position[2] + 6],
+    target: [reviewTree.position[0], 3, reviewTree.position[2]],
+    up: [0, 1, 0],
+    fov: 30,
+    isolatedName: `war-${reviewTree.id}`,
   });
 
   const geometryAfter = await page.evaluate(() =>
@@ -317,14 +403,17 @@ try {
     deviceScaleFactor: 1,
   });
   try {
-    const treeUrl = new URL('/assets/larp/war/tree.webp', baseUrl).href;
-    const bushUrl = new URL('/assets/larp/war/bush.webp', baseUrl).href;
+    const assetCards = expectedAssets.map((asset) => {
+      const absolute = new URL(asset, baseUrl).href;
+      const label = asset.split('/').at(-1);
+      return `<figure><div class="check"><img src="${absolute}"></div><figcaption>${label} alpha contrast</figcaption></figure>`;
+    }).join('');
     await alphaPage.setContent(`
       <!doctype html>
       <style>
         * { box-sizing: border-box; }
         body { margin: 0; background: #111; color: white; font: 20px monospace; }
-        main { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; height: 900px; padding: 24px; }
+        main { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; min-height: 900px; padding: 24px; }
         figure { margin: 0; min-width: 0; display: grid; grid-template-rows: 1fr auto; }
         .check {
           min-height: 0;
@@ -343,10 +432,7 @@ try {
         img { width: 86%; height: 94%; object-fit: contain; object-position: center bottom; }
         figcaption { padding: 10px 0 0; text-align: center; }
       </style>
-      <main>
-        <figure><div class="check"><img src="${treeUrl}"></div><figcaption>tree.webp alpha contrast</figcaption></figure>
-        <figure><div class="check"><img src="${bushUrl}"></div><figcaption>bush.webp alpha contrast</figcaption></figure>
-      </main>
+      <main>${assetCards}</main>
     `, { waitUntil: 'networkidle' });
     await alphaPage.waitForFunction(() => [...document.images].every((image) => image.complete && image.naturalWidth > 0));
     screenshots.alphaContrast = pathFromUrl(new URL('alpha-contrast.png', output));
@@ -365,20 +451,44 @@ try {
       exactPlaneCount: geometryBefore.reduce((sum, cutout) => sum + cutout.childCount, 0),
       planeAngleDegrees: 90,
       cameraRotationStable: true,
+      quadrantCounts,
+      reviewTargets: {
+        bush: reviewBush.id,
+        tree: reviewTree.id,
+      },
       minimumFieldClearance: {
         x: Math.min(...geometryBefore.map(({ fieldClearance }) => fieldClearance.x)),
         z: Math.min(...geometryBefore.map(({ fieldClearance }) => fieldClearance.z)),
       },
       minimumInstanceGap,
-      minimumBaseY: Math.min(...geometryBefore.map(({ worldBaseY }) => worldBaseY)),
-      maximumBaseY: Math.max(...geometryBefore.map(({ worldBaseY }) => worldBaseY)),
+      minimumVisibleBaseY: Math.min(...geometryBefore.map((cutout) => {
+        const authored = authoredByName.get(cutout.name);
+        return cutout.worldPlaneBaseY + cutout.size[1] * (authored.visibleBottomRatio ?? 0);
+      })),
+      maximumVisibleBaseY: Math.max(...geometryBefore.map((cutout) => {
+        const authored = authoredByName.get(cutout.name);
+        return cutout.worldPlaneBaseY + cutout.size[1] * (authored.visibleBottomRatio ?? 0);
+      })),
       instances: geometryBefore,
     },
     screenshots,
   };
   const reportPath = pathFromUrl(new URL('report.json', output));
   await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
-  console.log(JSON.stringify({ report: reportPath, ...report }, null, 2));
+  console.log(JSON.stringify({
+    report: reportPath,
+    assets: assetReport.map(({ relative, size, margins }) => ({ relative, size, margins })),
+    geometry: {
+      count: report.geometry.count,
+      exactPlaneCount: report.geometry.exactPlaneCount,
+      quadrantCounts,
+      minimumInstanceGap,
+      minimumVisibleBaseY: report.geometry.minimumVisibleBaseY,
+      maximumVisibleBaseY: report.geometry.maximumVisibleBaseY,
+      reviewTargets: report.geometry.reviewTargets,
+    },
+    screenshots,
+  }, null, 2));
 } finally {
   await browser.close();
 }

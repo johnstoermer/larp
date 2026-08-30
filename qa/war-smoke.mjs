@@ -65,12 +65,17 @@ try {
     game.onlineStateHistory.clear();
     game.player.position.set(0, 0.02, 24);
     game.player.yaw = game.warTeam === 1 ? Math.PI : 0;
-    game.player.pitch = isFireball ? 0.58 : -0.04;
+    // Aim the replication probe steeply above the crowded drop-in skirmish so
+    // its authoritative projectile survives long enough for two snapshots.
+    game.player.pitch = isFireball ? 1.25 : -0.04;
     game.player.syncCamera(1 / 60);
     game.warLastAttackAt = -Infinity;
     if (isFireball) {
       const probe = {
-        shotId: game.onlineShotSequence + 1,
+        firstShotId: game.onlineShotSequence + 1,
+        attemptedShotId: null,
+        shotId: null,
+        lastAttemptAt: -Infinity,
         projectileId: null,
         shotAck: 0,
         before: null,
@@ -82,9 +87,10 @@ try {
         if (
           message?.event === 'attack' &&
           message.shooter === game.warSlot &&
-          message.shotId === probe.shotId &&
+          message.shotId >= probe.firstShotId &&
           message.projectile
         ) {
+          probe.shotId = message.shotId;
           probe.projectileId = message.projectile.id;
           const visual = game.onlineProjectiles.get(probe.projectileId);
           if (visual) probe.before = visual.position.toArray();
@@ -97,11 +103,17 @@ try {
           (combatant) => combatant.id === game.warSlot,
         );
         probe.shotAck = Number(local?.shotAck) || 0;
-        if (!probe.projectileId && probe.shotAck >= probe.shotId) {
+        const expectedShotId = probe.shotId ?? probe.attemptedShotId;
+        if (
+          !probe.projectileId &&
+          expectedShotId != null &&
+          probe.shotAck >= expectedShotId
+        ) {
           const state = game.warSnapshot?.projectiles
             ?.filter((projectile) => projectile.owner === game.warSlot)
             .sort((left, right) => right.id - left.id)[0];
           probe.projectileId = state?.id ?? null;
+          if (probe.projectileId) probe.shotId = expectedShotId;
         }
         const position = game.onlineProjectiles
           .get(probe.projectileId)?.position.toArray();
@@ -117,8 +129,34 @@ try {
         }
       };
       requestAnimationFrame(sampleProjectile);
+      const retryFireball = () => {
+        if (probe.projectileId || probe.after) return;
+        const local = game.warSnapshot?.combatants?.find(
+          (combatant) => combatant.id === game.warSlot,
+        );
+        if (
+          local &&
+          !local.dead &&
+          !game.player.dead &&
+          game.elapsed - probe.lastAttemptAt >= 1.2
+        ) {
+          game.player.ammo = Math.max(1, Number(local.ammo) || 1);
+          game.player.reloading = false;
+          game.warLastAttackAt = -Infinity;
+          probe.attemptedShotId = game.onlineShotSequence + 1;
+          probe.lastAttemptAt = game.elapsed;
+          const restingPitch = game.player.pitch;
+          game.player.pitch = 1.25;
+          game.player.syncCamera(1 / 60);
+          game.fireWarWeapon();
+          game.player.pitch = restingPitch;
+          game.player.syncCamera(1 / 60);
+        }
+        requestAnimationFrame(retryFireball);
+      };
+      requestAnimationFrame(retryFireball);
     }
-    if (game.warClassId !== 'knives') game.fireWarWeapon();
+    if (game.warClassId !== 'knives' && !isFireball) game.fireWarWeapon();
     if (isFireball) {
       game.player.pitch = -0.04;
       game.player.syncCamera(1 / 60);
@@ -126,19 +164,22 @@ try {
   }, selectedClass === 'fireball');
   let heldKnifeThrows = null;
   if (selectedClass === 'knives') {
-    heldKnifeThrows = await page.evaluate(() => {
+    heldKnifeThrows = await page.evaluate((cadence) => {
       const game = window.__LARP_GAME__;
       const start = game.onlineShotSequence;
       const startTime = game.elapsed;
       game.player.buttons.add(0);
-      for (const offset of [0, 0.5, 1]) {
+      // Sample one render frame beyond the exact floating-point boundary, as
+      // real held input does, while still proving that the halfway update is
+      // rejected and the one-second cadence repeats without another click.
+      for (const offset of [0, cadence / 2, cadence + 1 / 60]) {
         game.elapsed = startTime + offset;
         const movement = game.player.update(1 / 60, true);
         if (movement.fire) game.fireWarWeapon();
       }
       game.player.buttons.delete(0);
       return game.onlineShotSequence - start;
-    });
+    }, WAR_CLASSES.knives.attackMs / 1_000);
   }
   let fireballMotion = null;
   if (selectedClass === 'fireball') {
@@ -146,10 +187,11 @@ try {
     try {
       motionHandle = await page.waitForFunction(() => {
         const probe = window.__LARP_WAR_FIREBALL_PROBE__;
-        return probe?.shotAck >= probe?.shotId && probe?.before && probe?.after
+        return probe?.shotId != null &&
+          probe?.shotAck >= probe?.shotId && probe?.before && probe?.after
           ? { before: probe.before, after: probe.after }
           : null;
-      }, null, { polling: 50, timeout: 10_000 });
+      }, null, { polling: 50, timeout: 20_000 });
     } catch (error) {
       const diagnostic = await page.evaluate(() => {
         const game = window.__LARP_GAME__;

@@ -6,14 +6,20 @@ import {
   WAR_CLASSES,
   WAR_CLASS_IDS,
   WAR_COMBATANT_COUNT,
+  WAR_MAP,
   WAR_TEAM_SIZE,
+  warSpawnForSlot,
 } from '../shared/warConfig.js';
 import { WarRoom, WAR_ROOM_LIMITS } from '../server/multiplayer/WarRoom.js';
+import { createWarBotNavigator } from '../server/multiplayer/warBotNavigation.js';
 import { WEAPONS as ARENA_WEAPONS } from '../server/multiplayer/config.js';
 import { warResumeCounters } from '../src/game/Game.js';
 import {
   clampWarPosition,
+  distanceSquared,
+  moveWarBody,
   warBodyIntersectsWorld,
+  warBodySweepIntersectsWorld,
 } from '../server/multiplayer/warGeometry.js';
 
 function createSession(name) {
@@ -75,6 +81,32 @@ test('War always contains two balanced teams of 40 and humans replace bot slots'
   assert.ok(sessions.every((session) =>
     session.messages.some((message) => message.type === 'war_found')
   ));
+});
+
+test('a joining human takes over a live skirmish instead of an empty spawn line', () => {
+  const room = new WarRoom({ now: 1_250, seed: 0x10ad });
+  const expected = [...room.eligibleBotForTeam(0, 1_250).position];
+  const session = createSession('Drop In');
+  const player = room.addSession(session, 'knives', 1_251);
+
+  assert.ok(player);
+  assert.equal(player.team, 0);
+  assert.deepEqual(player.position, [expected[0], 0.02, expected[2]]);
+  assert.notDeepEqual(player.position, warSpawnForSlot(player.team, player.teamSlot));
+  assert.equal(player.health, WAR_CLASSES.knives.health);
+  assert.equal(player.grounded, true);
+  const found = session.messages.find((message) => message.type === 'war_found');
+  const local = found.snapshot.combatants.find(({ id }) => id === player.slot);
+  assert.deepEqual(
+    local.position,
+    player.position.map((value) => Math.round(value * 100) / 100),
+  );
+  const attacker = room.players[WAR_TEAM_SIZE];
+  const protectedHealth = player.health;
+  assert.equal(room.applyDamage(player, 40, attacker, 1_351), 10);
+  assert.equal(player.health, protectedHealth - 10);
+  assert.equal(room.applyDamage(player, 40, attacker, 3_052), 40);
+  assert.equal(player.health, protectedHealth - 50);
 });
 
 test('all 80 human slots fill without unbalancing either team', () => {
@@ -201,6 +233,303 @@ test('fixed 10 Hz bots produce the same state for the same seed', () => {
   assert.equal(WAR_ROOM_LIMITS.botTickRate, 10);
 });
 
+test('multi-seed bot simulation is exactly reciprocal when physical sides swap', () => {
+  const start = 6_500;
+  for (const seed of [0x101, 0x202, 0x303]) {
+    const southRed = new WarRoom({
+      now: start,
+      seed,
+      teamSideSwap: 0,
+      rules: { unlockMs: 0, scoreToWin: 999_999, respawnMs: 3_500 },
+    });
+    const northRed = new WarRoom({
+      now: start,
+      seed,
+      teamSideSwap: 1,
+      rules: { unlockMs: 0, scoreToWin: 999_999, respawnMs: 3_500 },
+    });
+    for (let tick = 1; tick <= 300; tick += 1) {
+      southRed.update(start + tick * 100);
+      northRed.update(start + tick * 100);
+    }
+
+    assert.deepEqual(
+      southRed.control.scores,
+      [northRed.control.scores[1], northRed.control.scores[0]],
+      `reciprocal scores for seed ${seed}`,
+    );
+    for (let teamSlot = 0; teamSlot < WAR_TEAM_SIZE; teamSlot += 1) {
+      for (const team of [0, 1]) {
+        const first = southRed.players[team * WAR_TEAM_SIZE + teamSlot];
+        const reciprocal = northRed.players[(1 - team) * WAR_TEAM_SIZE + teamSlot];
+        assert.deepEqual(first.position, reciprocal.position);
+        assert.deepEqual(first.velocity, reciprocal.velocity);
+        assert.equal(first.health, reciprocal.health);
+        assert.equal(first.dead, reciprocal.dead);
+        assert.equal(first.deaths, reciprocal.deaths);
+        assert.equal(first.kills, reciprocal.kills);
+        assert.equal(first.attackSequence, reciprocal.attackSequence);
+      }
+    }
+  }
+
+  assert.equal(new WarRoom({ now: start, seed: 2 }).teamSideSwap, 0);
+  assert.equal(new WarRoom({ now: start, seed: 3 }).teamSideSwap, 1);
+});
+
+test('War loads into scattered mirrored skirmishes already moving, wounded, and evading', () => {
+  const now = 7_000;
+  const room = new WarRoom({ now, seed: 0xabc123 });
+  const moving = room.players.filter((player) =>
+    Math.hypot(player.velocity[0], player.velocity[2]) > 0.35
+  );
+  const airborne = room.players.filter((player) => !player.grounded);
+  const wounded = room.players.filter((player) => player.health < player.maxHealth);
+  const currentlyDodging = room.players.filter((player) => player.botDodgeUntil > now);
+  const xCoordinates = room.players.map((player) => player.position[0]);
+  const zCoordinates = room.players.map((player) => player.position[2]);
+
+  assert.ok(moving.length >= 72, `${moving.length} bots moving at load`);
+  assert.ok(airborne.length >= 16, `${airborne.length} bots airborne at load`);
+  assert.ok(wounded.length >= 32, `${wounded.length} bots carry battle damage`);
+  assert.ok(currentlyDodging.length >= 20, `${currentlyDodging.length} bots mid-dodge`);
+  assert.ok(Math.max(...xCoordinates) - Math.min(...xCoordinates) > 130);
+  assert.ok(Math.max(...zCoordinates) - Math.min(...zCoordinates) > 110);
+  assert.ok(room.players.every((player) => player.attackSequence > 0));
+  assert.ok(room.players.every((player) => {
+    const opponent = room.players[player.botTargetSlot];
+    return opponent && opponent.team !== player.team &&
+      Math.sqrt(distanceSquared(player.position, opponent.position)) < 3.3;
+  }));
+
+  for (let teamSlot = 0; teamSlot < WAR_TEAM_SIZE; teamSlot += 1) {
+    const red = room.players[teamSlot];
+    const blue = room.players[WAR_TEAM_SIZE + teamSlot];
+    assert.equal(red.position[0], blue.position[0], `paired x ${teamSlot}`);
+    assert.equal(red.position[1], blue.position[1], `paired y ${teamSlot}`);
+    assert.equal(red.position[2], -blue.position[2], `paired z ${teamSlot}`);
+    assert.ok(
+      Math.abs(red.velocity[0] - blue.velocity[0]) < 1e-9,
+      `paired vx ${teamSlot}`,
+    );
+    assert.ok(
+      Math.abs(red.velocity[2] + blue.velocity[2]) < 1e-9,
+      `paired vz ${teamSlot}`,
+    );
+    assert.equal(red.health, blue.health, `paired health ${teamSlot}`);
+    assert.equal(red.botAccuracy, blue.botAccuracy, `paired accuracy ${teamSlot}`);
+    assert.equal(red.botMeleeAccuracy, blue.botMeleeAccuracy, `paired melee ${teamSlot}`);
+    assert.equal(red.botDamageScale, blue.botDamageScale, `paired damage ${teamSlot}`);
+    assert.equal(red.botCadenceScale, blue.botCadenceScale, `paired cadence ${teamSlot}`);
+  }
+});
+
+test('bot exchanges include visible misses and remain alive through the opening fight', () => {
+  const now = 7_500;
+  const room = new WarRoom({
+    now,
+    seed: 0x51eed,
+    rules: { unlockMs: 999_999 },
+  });
+  const red = room.players[1];
+  const blue = room.players[WAR_TEAM_SIZE + 1];
+  disableAllExcept(room, [red.slot, blue.slot]);
+  room.setClass(red, 'shortbow', false);
+  room.setClass(blue, 'shortbow', false);
+  red.position = [0, 0.02, 10];
+  blue.position = [0, 0.02, -10];
+  red.health = red.maxHealth;
+  blue.health = blue.maxHealth;
+  red.botTargetSlot = blue.slot;
+  blue.botTargetSlot = red.slot;
+  red.botTargetRefreshAt = Infinity;
+  blue.botTargetRefreshAt = Infinity;
+  red.lastAttackAt = -Infinity;
+  blue.lastAttackAt = -Infinity;
+  const startingSequences = red.attackSequence + blue.attackSequence;
+
+  for (let tick = 1; tick <= 40; tick += 1) room.update(now + tick * 100);
+
+  const attempts = (red.botShotAttempts ?? 0) + (blue.botShotAttempts ?? 0);
+  const misses = (red.botDeliberateMisses ?? 0) + (blue.botDeliberateMisses ?? 0);
+  assert.ok(attempts >= 6, `${attempts} opening attacks`);
+  assert.ok(red.attackSequence + blue.attackSequence > startingSequences);
+  assert.ok(misses >= 2 && misses < attempts, `${misses}/${attempts} deliberate misses`);
+  assert.equal(red.dead, false, 'red survives the four-second opening exchange');
+  assert.equal(blue.dead, false, 'blue survives the four-second opening exchange');
+  assert.ok(red.health < red.maxHealth || blue.health < blue.maxHealth);
+  assert.ok(red.botCadenceScale >= 1, 'bots never exceed human weapon cadence');
+  assert.ok(blue.botCadenceScale >= 1, 'bots never exceed human weapon cadence');
+});
+
+test('bots repeatedly jump and dodge during a live battle', () => {
+  const now = 7_800;
+  const room = new WarRoom({
+    now,
+    seed: 0xd0d6e,
+    rules: { unlockMs: 999_999 },
+  });
+  const startingJumps = room.players.reduce((total, player) =>
+    total + player.botJumpCount, 0);
+  const startingDodges = room.players.reduce((total, player) =>
+    total + player.botDodgeCount, 0);
+  let maximumAirborne = 0;
+  for (let tick = 1; tick <= 35; tick += 1) {
+    room.update(now + tick * 100);
+    maximumAirborne = Math.max(
+      maximumAirborne,
+      room.players.filter((player) => !player.dead && !player.grounded).length,
+    );
+  }
+  const jumps = room.players.reduce((total, player) =>
+    total + player.botJumpCount, 0);
+  const dodges = room.players.reduce((total, player) =>
+    total + player.botDodgeCount, 0);
+  assert.ok(jumps - startingJumps >= 30, `${jumps - startingJumps} new jumps`);
+  assert.ok(dodges - startingDodges >= 50, `${dodges - startingDodges} new dodges`);
+  assert.ok(maximumAirborne >= 20, `${maximumAirborne} simultaneously airborne`);
+});
+
+test('AABB navigation routes around cover and bots do not stall against its face', () => {
+  const customMap = {
+    bounds: { x: 20, z: 20 },
+    colliders: [
+      [-20, -1, -20, 20, 0, 20],
+      [-2.5, 0, -12, 2.5, 4, 7],
+    ],
+  };
+  const navigator = createWarBotNavigator(customMap, { cellSize: 2 });
+  const start = [-12, 0.02, 0];
+  const goal = [12, 0.02, 0];
+  const path = navigator.findPath(start, goal);
+  assert.ok(path.length >= 2, `${path.length} path points around cover`);
+  assert.ok(path.some((point) => point[2] > 7.5 || point[2] < -12.5));
+  let anchor = start;
+  for (const waypoint of path) {
+    assert.equal(navigator.segmentIsWalkable(anchor, waypoint), true);
+    anchor = waypoint;
+  }
+
+  const room = new WarRoom({
+    now: 7_900,
+    seed: 0xaabb,
+    rules: { unlockMs: 999_999 },
+  });
+  const bot = room.players[0];
+  disableAllExcept(room, [bot.slot]);
+  const cover = WAR_MAP.colliders.find((collider) =>
+    collider[1] >= 0 && collider[4] > 1 &&
+    collider[3] - collider[0] >= 5 && collider[5] - collider[2] >= 5 &&
+    Math.abs((collider[0] + collider[3]) * 0.5) < WAR_MAP.bounds.x - 15 &&
+    Math.abs((collider[2] + collider[5]) * 0.5) < WAR_MAP.bounds.z - 15
+  );
+  assert.ok(cover, 'the War map includes solid cover to navigate');
+  const centerZ = (cover[2] + cover[5]) * 0.5;
+  const startPosition = room.botNavigator.nearestWalkablePoint([
+    cover[0] - 6,
+    0.02,
+    centerZ,
+  ]);
+  const destination = room.botNavigator.nearestWalkablePoint([
+    cover[3] + 6,
+    0.02,
+    centerZ,
+  ]);
+  bot.position = startPosition;
+  bot.grounded = true;
+  bot.verticalVelocity = 0;
+  bot.botPath = [];
+  bot.botPathGoal = null;
+  bot.botStuckTicks = 0;
+  room.botDestination = () => destination;
+  let maximumBlockedTicks = 0;
+  let blockedTicks = 0;
+  for (let tick = 1; tick <= 180; tick += 1) {
+    const before = [...bot.position];
+    room.botTick = tick;
+    room.updateBotMovement(bot, 0.1, 7_900 + tick * 100);
+    assert.equal(warBodyIntersectsWorld(bot.position), false);
+    const remaining = Math.sqrt(distanceSquared(bot.position, destination));
+    const travelled = Math.sqrt(distanceSquared(before, bot.position));
+    blockedTicks = remaining > 1.2 && travelled < 0.01 ? blockedTicks + 1 : 0;
+    maximumBlockedTicks = Math.max(maximumBlockedTicks, blockedTicks);
+  }
+  assert.ok(
+    Math.sqrt(distanceSquared(bot.position, destination)) < 1.2,
+    `bot stopped at ${bot.position.join(', ')}`,
+  );
+  assert.ok(maximumBlockedTicks < 5, `${maximumBlockedTicks} blocked ticks`);
+});
+
+test('navigation edges cannot tunnel across a thin prop between grid centers', () => {
+  const navigator = createWarBotNavigator({
+    bounds: { x: 6, z: 6 },
+    colliders: [
+      [-6, -1, -6, 6, 0, 6],
+      [-1, 0, 2.05, 1, 3, 2.15],
+    ],
+  }, { cellSize: 3 });
+  const start = [0.62, 0.02, 3.62];
+  const goal = [0.62, 0.02, 0.62];
+  const path = navigator.findPath(start, goal);
+  assert.ok(path.length >= 2, `${path.length} waypoints around the thin prop`);
+  let anchor = start;
+  for (const waypoint of path) {
+    assert.equal(navigator.segmentIsWalkable(anchor, waypoint), true);
+    anchor = waypoint;
+  }
+});
+
+test('all 80 bots recover without a one-second wall scrape in the long busy-map seed', () => {
+  const start = 100_000;
+  const room = new WarRoom({
+    now: start,
+    seed: 0x57a22,
+    rules: {
+      unlockMs: 0,
+      scoreToWin: 999_999,
+      respawnMs: 3_500,
+    },
+  });
+  const activeScrapeTicks = new Uint16Array(WAR_COMBATANT_COUNT);
+  let longestScrapeTicks = 0;
+  let longestSlot = null;
+  let maximumRawStuckTicks = 0;
+
+  for (let tick = 1; tick <= 1_800; tick += 1) {
+    room.update(start + tick * 100);
+    for (const player of room.players) {
+      assert.equal(
+        warBodyIntersectsWorld(player.position),
+        false,
+        `slot ${player.slot} entered scenery at tick ${tick}`,
+      );
+      if (!player.dead && player.botStuckTicks >= 3) {
+        activeScrapeTicks[player.slot] += 1;
+      } else {
+        activeScrapeTicks[player.slot] = 0;
+      }
+      maximumRawStuckTicks = Math.max(
+        maximumRawStuckTicks,
+        player.botStuckTicks,
+      );
+      if (activeScrapeTicks[player.slot] > longestScrapeTicks) {
+        longestScrapeTicks = activeScrapeTicks[player.slot];
+        longestSlot = player.slot;
+      }
+    }
+  }
+
+  assert.ok(
+    longestScrapeTicks < 10,
+    `slot ${longestSlot} scraped for ${longestScrapeTicks} consecutive ticks`,
+  );
+  assert.ok(
+    maximumRawStuckTicks < 10,
+    `stuck counter reached ${maximumRawStuckTicks}`,
+  );
+});
+
 test('same-tick bot damage resolves simultaneously instead of favoring red slots', () => {
   const room = new WarRoom({ now: 8_000, seed: 0xdecafbad, rules: { unlockMs: 0 } });
   const red = room.players[4];
@@ -210,8 +539,10 @@ test('same-tick bot damage resolves simultaneously instead of favoring red slots
   room.setClass(blue, 'greatsword', false);
   red.position = [-1, 0.02, 0];
   blue.position = [1, 0.02, 0];
-  red.health = WAR_CLASSES.greatsword.damage;
-  blue.health = WAR_CLASSES.greatsword.damage;
+  red.health = WAR_CLASSES.greatsword.damage * red.botDamageScale;
+  blue.health = WAR_CLASSES.greatsword.damage * blue.botDamageScale;
+  red.botMeleeAccuracy = 1;
+  blue.botMeleeAccuracy = 1;
   red.lastAttackAt = -Infinity;
   blue.lastAttackAt = -Infinity;
 
@@ -221,6 +552,58 @@ test('same-tick bot damage resolves simultaneously instead of favoring red slots
   assert.equal(blue.dead, true, 'red attack resolves in the same tick');
   assert.equal(red.deaths, 1);
   assert.equal(blue.deaths, 1);
+});
+
+test('queued same-tick bot hit events report only damage that survives the flush', () => {
+  const now = 8_300;
+  const room = new WarRoom({
+    now,
+    seed: 0xdecafbad,
+    rules: { unlockMs: 999_999 },
+  });
+  const redFirst = room.players[0];
+  const redSecond = room.players[1];
+  const blue = room.players[WAR_TEAM_SIZE];
+  disableAllExcept(room, [redFirst.slot, redSecond.slot, blue.slot]);
+  room.updateBotMovement = () => {};
+  const attackEvents = [];
+  room.broadcast = (payload) => {
+    if (payload.event === 'attack') attackEvents.push(payload);
+    return true;
+  };
+  for (const player of [redFirst, redSecond, blue]) {
+    room.setClass(player, 'greatsword', false);
+    player.health = WAR_CLASSES.greatsword.damage;
+    player.lastAttackAt = -Infinity;
+    player.botDamageScale = 1;
+    player.botMeleeAccuracy = 1;
+    player.botTargetRefreshAt = Infinity;
+  }
+  redFirst.position = [2, 0.02, 0];
+  redSecond.position = [-2, 0.02, 0];
+  blue.position = [0, 0.02, 0];
+  redFirst.botTargetSlot = blue.slot;
+  redSecond.botTargetSlot = blue.slot;
+  blue.botTargetSlot = redSecond.slot;
+
+  room.runBotTick(now + 100);
+
+  const first = attackEvents.find((event) => event.shooter === redFirst.slot);
+  const redundant = attackEvents.find((event) => event.shooter === redSecond.slot);
+  const reciprocal = attackEvents.find((event) => event.shooter === blue.slot);
+  assert.equal(first.hit, true);
+  assert.equal(first.damage, WAR_CLASSES.greatsword.damage);
+  assert.equal(first.hits[0].health, 0);
+  assert.equal(redundant.hit, false);
+  assert.equal(redundant.damage, 0);
+  assert.deepEqual(redundant.hits, []);
+  assert.equal(reciprocal.hit, true, 'blue still resolves its reciprocal trade');
+  assert.equal(reciprocal.damage, WAR_CLASSES.greatsword.damage);
+  assert.ok(reciprocal.hits.some((hit) =>
+    hit.target === redSecond.slot && hit.health === 0
+  ));
+  assert.equal(blue.dead, true);
+  assert.equal(redSecond.dead, true);
 });
 
 test('paired bot routes are exact team mirrors', () => {
@@ -257,6 +640,65 @@ test('human movement is speed bounded and cannot enter War cover or leave the ma
   assert.ok(Math.abs(player.velocity[1]) <= 12);
 
   assert.deepEqual(clampWarPosition([999, -100, -999]), [119.55, 0.02, -99.55]);
+});
+
+test('War boundary contact permits movement away or tangent on every side', () => {
+  const safeSweeps = [
+    {
+      label: 'south boundary regression',
+      start: [-14.75, 0.02, 99.55],
+      end: [-14.75, 0.02, 99],
+    },
+    {
+      label: 'north boundary',
+      start: [-14.75, 0.02, -99.55],
+      end: [-14.75, 0.02, -99],
+    },
+    {
+      label: 'east boundary',
+      start: [119.55, 0.02, 7.25],
+      end: [119, 0.02, 7.25],
+    },
+    {
+      label: 'west boundary',
+      start: [-119.55, 0.02, 7.25],
+      end: [-119, 0.02, 7.25],
+    },
+    {
+      label: 'south-east corner',
+      start: [119.55, 0.02, 99.55],
+      end: [119, 0.02, 99],
+    },
+    {
+      label: 'north-west corner',
+      start: [-119.55, 0.02, -99.55],
+      end: [-119, 0.02, -99],
+    },
+    {
+      label: 'tangent to east boundary',
+      start: [119.55, 0.02, 7.25],
+      end: [119.55, 0.02, 6.75],
+    },
+  ];
+
+  for (const { label, start, end } of safeSweeps) {
+    assert.equal(warBodySweepIntersectsWorld(start, end), false, label);
+    assert.deepEqual(moveWarBody(start, end), end, label);
+  }
+});
+
+test('War boundary contact still rejects movement into a side at edges and corners', () => {
+  const blockedSweeps = [
+    [[-14.75, 0.02, 99.55], [-14.75, 0.02, 100]],
+    [[-14.75, 0.02, -99.55], [-14.75, 0.02, -100]],
+    [[119.55, 0.02, 7.25], [120, 0.02, 7.25]],
+    [[-119.55, 0.02, 7.25], [-120, 0.02, 7.25]],
+    [[119.55, 0.02, 99.55], [119, 0.02, 100]],
+    [[119.55, 0.02, 99.55], [120, 0.02, 99]],
+  ];
+  for (const [start, end] of blockedSweeps) {
+    assert.equal(warBodySweepIntersectsWorld(start, end), true);
+  }
 });
 
 test('War bounds vertical state and accepts the legitimate greatsword slide speed', () => {
@@ -659,6 +1101,7 @@ test('server-authoritative attacks damage, kill, change class, and respawn after
   attacker.position = [-5, 0.02, 10];
   target.position = [5, 0.02, 10];
   attacker.lastAttackAt = -Infinity;
+  target.damageProtectionUntil = 0;
   target.health = WAR_CLASSES.crossbow.damage;
 
   assert.equal(room.handleShot(attackerSession, {
@@ -704,6 +1147,7 @@ test('greatsword uses a broad forward melee arc without consuming ammunition', (
   enemies[1].position = [2.6, 0.02, 9.3];
   enemies[2].position = [2.6, 0.02, 6.7];
   enemies[3].position = [-2, 0.02, 8];
+  for (const enemy of enemies) enemy.health = enemy.maxHealth;
   const startingHealth = enemies.map((enemy) => enemy.health);
 
   assert.equal(room.handleShot(session, {

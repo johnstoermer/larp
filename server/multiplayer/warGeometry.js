@@ -12,9 +12,36 @@ const BODY_RADIUS = 0.45;
 const BODY_HEIGHT = 1.76;
 const FLOOR_Y = 0.02;
 const MAX_Y = 8;
+const CONTACT_EPSILON = 1e-7;
 
 const clamp = (value, minimum, maximum) =>
   Math.max(minimum, Math.min(maximum, value));
+
+// rayAabbDistance reports zero both when a sweep enters a box at its surface
+// and when it starts on that surface and travels away. Only the former should
+// block movement. Tangential motion is also safe because the body remains in
+// contact without crossing into the expanded collider.
+function entersExpandedColliderFromContact(start, direction, expanded) {
+  let touchesFace = false;
+  let movesInward = false;
+  for (let axis = 0; axis < 3; axis += 1) {
+    const minimum = expanded[axis];
+    const maximum = expanded[axis + 3];
+    if (Math.abs(start[axis] - minimum) <= CONTACT_EPSILON) {
+      touchesFace = true;
+      if (direction[axis] < -CONTACT_EPSILON) return false;
+      if (direction[axis] > CONTACT_EPSILON) movesInward = true;
+    }
+    if (Math.abs(start[axis] - maximum) <= CONTACT_EPSILON) {
+      touchesFace = true;
+      if (direction[axis] > CONTACT_EPSILON) return false;
+      if (direction[axis] < -CONTACT_EPSILON) movesInward = true;
+    }
+  }
+  // Preserve the conservative behavior for an invalid start already inside a
+  // collider; this exception is only for valid surface contact.
+  return !touchesFace || movesInward;
+}
 
 export function clampWarPosition(position) {
   return [
@@ -59,6 +86,11 @@ export function warBodySweepIntersectsWorld(start, end) {
       collider[5] + BODY_RADIUS,
     ];
     const contact = rayAabbDistance(start, direction, expanded, distance);
+    if (
+      contact != null &&
+      contact <= CONTACT_EPSILON &&
+      !entersExpandedColliderFromContact(start, direction, expanded)
+    ) continue;
     if (contact != null && contact < distance - 0.02) return true;
   }
   return false;

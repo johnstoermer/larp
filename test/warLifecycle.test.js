@@ -6,6 +6,7 @@ import { Game } from '../src/game/Game.js';
 import {
   NetworkClient,
   PENDING_LEAVE_KEY,
+  PROTOCOL_VERSION as CLIENT_PROTOCOL_VERSION,
   welcomeInvalidatesResume,
 } from '../src/game/NetworkClient.js';
 
@@ -55,6 +56,11 @@ function socket(readyState = 1, extensions = 'permessage-deflate') {
     },
   };
 }
+
+test('client and server advertise the same War geometry protocol', () => {
+  assert.equal(PROTOCOL_VERSION, 5);
+  assert.equal(CLIENT_PROTOCOL_VERSION, PROTOCOL_VERSION);
+});
 
 test('hello rejects the previous protocol before creating a session', () => {
   const hub = createHelloHub();

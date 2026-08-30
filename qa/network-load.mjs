@@ -1,5 +1,6 @@
 import { writeFile } from 'node:fs/promises';
 import WebSocket from 'ws';
+import { PROTOCOL_VERSION } from '../server/multiplayer/config.js';
 
 const baseUrl = process.env.LARP_URL || 'http://127.0.0.1:8080';
 const clientCount = Number(process.env.LARP_LOAD_CLIENTS || 24);
@@ -26,7 +27,7 @@ function createClient(index) {
     socket.send(
       JSON.stringify({
         type: 'hello',
-        version: 4,
+        version: PROTOCOL_VERSION,
         name: `LOAD ${String(index).padStart(2, '0')}`,
       }),
     );

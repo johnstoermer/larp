@@ -43,7 +43,14 @@ const EXPECTED_FIXED = Object.freeze({
     'roof-shingles.webp',
     'timber.webp',
   ],
-  war: ['bush.webp', 'tree.webp'],
+  war: [
+    'bush.webp',
+    'damaged-tree.webp',
+    'foam-barricade.webp',
+    'supply-hut.webp',
+    'tree.webp',
+    'watchtower.webp',
+  ],
   root: ['cover.webp'],
 });
 

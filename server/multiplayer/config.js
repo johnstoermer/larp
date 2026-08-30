@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 export const SERVER_TICK_RATE = 30;
 export const SNAPSHOT_RATE = 30;
 

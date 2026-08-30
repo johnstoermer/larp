@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import {
+  WAR_APPROACH_FOLIAGE,
   WAR_COMBATANT_COUNT,
   WAR_FOLIAGE,
   WAR_MAP,
@@ -9,7 +10,13 @@ import {
   warSpawnForSlot,
 } from '../shared/warConfig.js';
 import { Arena } from '../src/game/Arena.js';
-import { createFixedCrossedPlane, WarArena } from '../src/game/WarArena.js';
+import {
+  WAR_CENTER_ROAD_SEGMENTS,
+  WAR_SPAWN_TRACK_PATCHES,
+  createFixedCrossedPlane,
+  createFixedPhotoProp,
+  WarArena,
+} from '../src/game/WarArena.js';
 
 test('War is an 80-combatant symmetric map with no field pickups', () => {
   assert.equal(WAR_TEAM_SIZE, 40);
@@ -55,15 +62,79 @@ test('foliage uses two identical fixed planes at exactly 90 degrees', () => {
   assert.deepEqual(group.children.map((child) => child.rotation.y), rotations);
 });
 
-test('WarArena instantiates every tree and bush as fixed crossed geometry', () => {
+test('fixed photo props keep their authored yaw and grounded transparent padding', () => {
+  const prop = createFixedPhotoProp({
+    asset: '/assets/larp/war/watchtower.webp',
+    width: 20,
+    height: 12,
+    yaw: Math.PI / 2,
+    visibleBottomRatio: 0.125,
+  });
+  assert.equal(prop.type, 'Mesh');
+  assert.equal(prop.userData.fixedPhotoProp, true);
+  assert.equal(prop.rotation.y, Math.PI / 2);
+  assert.equal(prop.position.y, 4.5);
+  assert.equal(prop.material.transparent, true);
+  assert.equal(prop.material.side, THREE.DoubleSide);
+  prop.geometry.dispose();
+  prop.material.dispose();
+});
+
+test('WarArena instantiates all dense scenery with fixed photo geometry', () => {
   const scene = new THREE.Scene();
   const arena = new WarArena(scene, {});
 
   assert.equal(arena.root.name, 'war-arena');
   assert.equal(arena.weaponSlots.length, 0);
   assert.equal(arena.foliageCutouts.length, WAR_FOLIAGE.length);
+  assert.equal(arena.photoPropCutouts.length, WAR_MAP.photoProps.length);
+  assert.equal(arena.surfaceMeshes.length, WAR_MAP.surfaces.length);
+  assert.equal(
+    arena.roadMeshes.length,
+    WAR_CENTER_ROAD_SEGMENTS.length + WAR_SPAWN_TRACK_PATCHES.length,
+  );
+  assert.equal(
+    arena.structureMeshes.length,
+    WAR_MAP.structureParts.length +
+      WAR_MAP.legacyCover.filter((cover) => !cover.photoReplacementId).length,
+  );
   assert.equal(arena.colliders.length, WAR_MAP.colliders.length);
-  assert.ok(arena.raycastMeshes.length < 24);
+  assert.equal(
+    arena.raycastMeshes.length,
+    WAR_MAP.colliders.length,
+    'every authority collider has one client ray obstruction',
+  );
+  assert.ok(arena.structureMeshes.every((mesh) => mesh.visible === false));
+  assert.ok(arena.surfaceMeshes.every((mesh) => mesh.visible === false));
+  assert.ok(arena.roadMeshes.every((mesh) => mesh.visible === false));
+  assert.ok(arena.structureBatches.every((mesh) => mesh.isInstancedMesh));
+  assert.ok(arena.surfaceBatches.every((mesh) => mesh.isInstancedMesh));
+  assert.ok(arena.roadBatches.every((mesh) => mesh.isInstancedMesh));
+  assert.ok(arena.structureTrimMeshes.every((mesh) => mesh.isInstancedMesh));
+  assert.ok(arena.structureBatches.length <= 7);
+  assert.ok(arena.surfaceBatches.length <= 4);
+  assert.ok(arena.roadBatches.length <= 2);
+  assert.equal(arena.structureTrimMeshes.length, 1);
+  assert.ok(arena.photoProps.every(({ collisionProxy }) =>
+    collisionProxy?.visible === false));
+  const proxy = arena.photoProps[0].collisionProxy;
+  const proxyBounds = arena.photoProps[0].collisionBounds;
+  const proxyCenter = new THREE.Vector3(
+    proxyBounds[0] - 2,
+    (proxyBounds[1] + proxyBounds[4]) / 2,
+    (proxyBounds[2] + proxyBounds[5]) / 2,
+  );
+  arena.raycaster.set(proxyCenter, new THREE.Vector3(1, 0, 0));
+  arena.raycaster.far = proxyBounds[3] - proxyBounds[0] + 4;
+  assert.ok(
+    arena.raycaster.intersectObject(proxy, false).length > 0,
+    'hidden collision proxies must remain available to explicit shot raycasts',
+  );
+  for (const cutout of arena.photoPropCutouts) {
+    assert.equal(cutout.type, 'Mesh');
+    assert.equal(cutout.userData.fixedPhotoProp, true);
+    assert.equal(cutout.isSprite, undefined);
+  }
   for (const cutout of arena.foliageCutouts) {
     assert.equal(cutout.userData.fixedCrossedPlane, true);
     assert.equal(cutout.children.length, 2);
@@ -71,8 +142,8 @@ test('WarArena instantiates every tree and bush as fixed crossed geometry', () =
   }
   assert.equal(
     new Set(arena.foliageCutouts.map((cutout) => cutout.children[0].geometry)).size,
-    2,
-    'all trees share one geometry and all bushes share one geometry',
+    new Set(WAR_FOLIAGE.map((item) => `${item.width}:${item.height}`)).size,
+    'every repeated authored foliage size shares one geometry',
   );
 
   const before = arena.foliageCutouts.map((cutout) => cutout.rotation.y);
@@ -81,13 +152,18 @@ test('WarArena instantiates every tree and bush as fixed crossed geometry', () =
   );
   const objectiveGeometry = arena.objectiveMarker.geometry;
   const objectiveMaterial = arena.objectiveMarker.material;
+  const structureBatch = arena.structureBatches[0];
   let objectiveGeometryDisposed = false;
   let objectiveMaterialDisposed = false;
+  let structureBatchDisposed = false;
   objectiveGeometry.addEventListener('dispose', () => {
     objectiveGeometryDisposed = true;
   });
   objectiveMaterial.addEventListener('dispose', () => {
     objectiveMaterialDisposed = true;
+  });
+  structureBatch.addEventListener('dispose', () => {
+    structureBatchDisposed = true;
   });
   let shadowMapDisposed = 0;
   let shadowMapPassDisposed = 0;
@@ -102,6 +178,7 @@ test('WarArena instantiates every tree and bush as fixed crossed geometry', () =
   arena.load(0, 2);
   assert.equal(objectiveGeometryDisposed, true, 'reload disposes the prior control geometry');
   assert.equal(objectiveMaterialDisposed, true, 'reload disposes the prior control material');
+  assert.equal(structureBatchDisposed, true, 'reload releases prior instance buffers');
   assert.equal(shadowMapDisposed, 1, 'reload disposes the prior shadow render target');
   assert.equal(shadowMapPassDisposed, 1, 'reload disposes the prior VSM shadow target');
   assert.deepEqual(
@@ -110,6 +187,43 @@ test('WarArena instantiates every tree and bush as fixed crossed geometry', () =
     'reloading War must reuse crossed-plane geometry',
   );
   arena.dispose();
+});
+
+test('spawn views use a narrow broken road and mirrored non-solid foreground foliage', () => {
+  assert.equal(WAR_CENTER_ROAD_SEGMENTS.length, 3);
+  assert.ok(WAR_CENTER_ROAD_SEGMENTS.every(({ size }) => size[0] <= 12));
+  assert.ok(
+    WAR_CENTER_ROAD_SEGMENTS.every(({ position, size }) =>
+      Math.abs(position[2]) + size[2] / 2 <= 80),
+    'the main dirt slab must stop before the rear spawn-camera foreground',
+  );
+  assert.equal(WAR_SPAWN_TRACK_PATCHES.length, 8);
+  assert.equal(WAR_APPROACH_FOLIAGE.length, 8);
+  assert.ok(WAR_APPROACH_FOLIAGE.every((item) => !item.solid && !item.collisionBounds));
+
+  for (const item of WAR_APPROACH_FOLIAGE) {
+    const mirror = WAR_APPROACH_FOLIAGE.find((candidate) =>
+      candidate.type === item.type &&
+      candidate.position[0] === -item.position[0] &&
+      candidate.position[2] === -item.position[2]);
+    assert.ok(mirror, `${item.id} has no rotationally mirrored deployment counterpart`);
+    assert.equal(mirror.width, item.width);
+    assert.equal(mirror.height, item.height);
+    assert.ok(
+      Math.hypot(item.position[0], item.position[2]) >= WAR_MAP.objective.radius + 20,
+      `${item.id} crowds the objective sightline`,
+    );
+    for (let team = 0; team < 2; team += 1) {
+      for (let slot = 0; slot < WAR_TEAM_SIZE; slot += 1) {
+        const spawn = warSpawnForSlot(team, slot);
+        assert.ok(
+          Math.hypot(item.position[0] - spawn[0], item.position[2] - spawn[2]) >=
+            item.width / 2 + 3,
+          `${item.id} visually crowds team ${team} spawn ${slot}`,
+        );
+      }
+    }
+  }
 });
 
 test('Arena and War restore their own sky and fog on every activation', () => {

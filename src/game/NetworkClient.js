@@ -1,6 +1,6 @@
 import { LatencyTracker } from './LatencyTracker.js';
 
-const PROTOCOL_VERSION = 4;
+const PROTOCOL_VERSION = 5;
 const RECONNECT_DELAYS = [350, 700, 1200, 2000, 3200, 5000];
 const PING_INTERVAL_MS = 1000;
 const PING_TIMEOUT_MS = 5000;

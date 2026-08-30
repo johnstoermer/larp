@@ -27,6 +27,7 @@ import {
   moveWarBody,
   traceWarCombatants,
 } from './warGeometry.js';
+import { createWarBotNavigator } from './warBotNavigation.js';
 
 const MAX_MESSAGES_AHEAD = 2_048;
 const MAX_MOVEMENT_CREDIT = 1.35;
@@ -53,6 +54,20 @@ const WAR_STANDING_EYE_HEIGHT = 1.58;
 const WAR_SLIDING_EYE_HEIGHT = 0.92;
 const GREAT_SWORD_HALF_ARC = Math.PI * 0.39;
 const GREAT_SWORD_MAX_TARGETS = 4;
+const BOT_DAMAGE_SCALE_MIN = 0.5;
+const BOT_DAMAGE_SCALE_MAX = 0.6;
+const BOT_CADENCE_SCALE_MIN = 1.28;
+const BOT_CADENCE_SCALE_MAX = 1.72;
+const BOT_DODGE_MIN_MS = 1_250;
+const BOT_DODGE_VARIANCE_MS = 1_900;
+const BOT_DODGE_DURATION_MIN_MS = 360;
+const BOT_DODGE_DURATION_VARIANCE_MS = 300;
+const BOT_STUCK_REPATH_TICKS = 3;
+const BOT_STUCK_JUMP_TICKS = 7;
+const BOT_RECOVERY_MIN_MS = 1_100;
+const BOT_RECOVERY_REPATH_MS = 450;
+const HUMAN_DROP_IN_PROTECTION_MS = 1_800;
+const HUMAN_DROP_IN_DAMAGE_SCALE = 0.25;
 
 const clamp = (value, minimum, maximum) =>
   Math.max(minimum, Math.min(maximum, value));
@@ -138,14 +153,39 @@ function createCombatant(globalSlot, now, seed) {
     dead: false,
     deathAt: Infinity,
     respawnAt: Infinity,
+    damageProtectionUntil: 0,
     lastStateAt: now,
     lastPhysicsAt: now,
     movementCredit: MAX_MOVEMENT_CREDIT,
     lastSequence: 0,
     lastShotId: 0,
     lastAttackAt:
-      now - hashUnit(seed, globalSlot, 0, 11) * definition.attackMs,
-    attackSequence: 0,
+      now - hashUnit(seed, teamSlot, 0, 11) * definition.attackMs,
+    attackSequence: 1 + Math.floor(hashUnit(seed, teamSlot, 0, 12) * 3),
+    botTargetSlot: null,
+    botTargetRefreshAt: 0,
+    botPath: [],
+    botPathIndex: 0,
+    botPathGoal: null,
+    botStuckTicks: 0,
+    botRecoveryUntil: 0,
+    botRecoveryRepathAt: 0,
+    botLastProgressAt: now,
+    botLastProgressPosition: copyVector(spawn),
+    botDodgeUntil: 0,
+    botNextDodgeAt: now + BOT_DODGE_MIN_MS +
+      hashUnit(seed, teamSlot, 0, 13) * BOT_DODGE_VARIANCE_MS,
+    botDodgeSign: hashUnit(seed, teamSlot, 0, 14) < 0.5 ? -1 : 1,
+    botDodgeCount: 0,
+    botJumpCount: 0,
+    botCadenceScale: BOT_CADENCE_SCALE_MIN +
+      hashUnit(seed, teamSlot, 0, 15) *
+        (BOT_CADENCE_SCALE_MAX - BOT_CADENCE_SCALE_MIN),
+    botDamageScale: BOT_DAMAGE_SCALE_MIN +
+      hashUnit(seed, teamSlot, 0, 16) *
+        (BOT_DAMAGE_SCALE_MAX - BOT_DAMAGE_SCALE_MIN),
+    botAccuracy: 0.38 + hashUnit(seed, teamSlot, 0, 17) * 0.18,
+    botMeleeAccuracy: 0.62 + hashUnit(seed, teamSlot, 0, 18) * 0.12,
     kills: 0,
     deaths: 0,
     ready: true,
@@ -172,6 +212,7 @@ export class WarRoom {
     rules = {},
     now = Date.now(),
     seed = (Math.floor(Math.random() * 0xffffffff) ^ now) >>> 0,
+    teamSideSwap = null,
   } = {}) {
     if (!Array.isArray(sessions) || sessions.length > WAR_COMBATANT_COUNT) {
       throw new Error(`A War room accepts at most ${WAR_COMBATANT_COUNT} sessions.`);
@@ -182,6 +223,12 @@ export class WarRoom {
     this.privateMatch = false;
     this.rules = Object.freeze({ ...WAR_RULES, ...rules });
     this.seed = seed >>> 0;
+    // The authored north and south approaches are intentionally different.
+    // Alternate which logical team receives each physical side so neither team
+    // identifier owns the stronger approach across matches.
+    this.teamSideSwap = teamSideSwap == null
+      ? this.seed & 1
+      : Number(Boolean(teamSideSwap));
     this.createdAt = now;
     this.updatedAt = now;
     this.destroyAt = Infinity;
@@ -195,13 +242,16 @@ export class WarRoom {
     this.nextBotAt = now + this.botInterval;
     this.snapshotInterval = 1_000 / this.rules.snapshotRate;
     this.snapshotAt = now + this.snapshotInterval;
+    this.botNavigator = createWarBotNavigator(WAR_MAP);
     this.players = Array.from(
       { length: WAR_COMBATANT_COUNT },
       (_, slot) => createCombatant(slot, now, this.seed),
     );
+    this.stageInitialBattle(now);
     this.projectiles = [];
     this.nextProjectileId = 1;
     this.pendingBotDamage = null;
+    this.pendingBotAttacks = null;
     this.control = new WarControl({ now, rules: this.rules });
 
     sessions.forEach((entry, index) => {
@@ -212,6 +262,122 @@ export class WarRoom {
         now,
       );
     });
+  }
+
+  battlePocket(pairIndex) {
+    const column = pairIndex % 5;
+    const row = Math.floor(pairIndex / 5);
+    const separation = 1.05 + hashUnit(this.seed, pairIndex, 0, 35) * 0.52;
+    const preferredX = -76 + column * 38 +
+      (hashUnit(this.seed, pairIndex, 0, 36) - 0.5) * 15;
+    const preferredZ = 15 + row * 17.5 +
+      (hashUnit(this.seed, pairIndex, 0, 37) - 0.5) * 9;
+    const candidateIsClear = (x, z) => [
+      [x - separation, WAR_FLOOR_Y, z],
+      [x + separation, WAR_FLOOR_Y, z],
+      [x - separation, WAR_FLOOR_Y, -z],
+      [x + separation, WAR_FLOOR_Y, -z],
+    ].every((position) => this.botNavigator.pointIsWalkable(position));
+
+    for (let ring = 0; ring <= 24; ring += 1) {
+      const offsets = [];
+      for (let offsetZ = -ring; offsetZ <= ring; offsetZ += 1) {
+        for (let offsetX = -ring; offsetX <= ring; offsetX += 1) {
+          if (
+            ring > 0 &&
+            Math.abs(offsetX) !== ring &&
+            Math.abs(offsetZ) !== ring
+          ) continue;
+          offsets.push([offsetX, offsetZ]);
+        }
+      }
+      offsets.sort((first, second) =>
+        Math.hypot(first[0], first[1]) - Math.hypot(second[0], second[1]) ||
+        Math.abs(first[1]) - Math.abs(second[1]) ||
+        first[0] - second[0] ||
+        first[1] - second[1]
+      );
+      for (const [offsetX, offsetZ] of offsets) {
+        const x = preferredX + offsetX * 3.2;
+        const z = preferredZ + offsetZ * 3.2;
+        if (candidateIsClear(x, z)) return { x, z, separation };
+      }
+    }
+    return { x: preferredX, z: preferredZ, separation };
+  }
+
+  stageInitialBattle(now) {
+    for (let pairIndex = 0; pairIndex < WAR_TEAM_SIZE / 2; pairIndex += 1) {
+      const pocket = this.battlePocket(pairIndex);
+      for (let side = 0; side < 2; side += 1) {
+        const teamSlot = pairIndex * 2 + side;
+        const red = this.players[teamSlot];
+        const blue = this.players[WAR_TEAM_SIZE + teamSlot];
+        const redPosition = [
+          pocket.x + (side ? pocket.separation : -pocket.separation),
+          WAR_FLOOR_Y,
+          side ? -pocket.z : pocket.z,
+        ];
+        const mirroredPosition = [
+          redPosition[0],
+          WAR_FLOOR_Y,
+          -redPosition[2],
+        ];
+        red.position = this.teamSideSwap ? mirroredPosition : redPosition;
+        blue.position = this.teamSideSwap ? redPosition : mirroredPosition;
+        red.botTargetSlot = WAR_TEAM_SIZE + (teamSlot ^ 1);
+        blue.botTargetSlot = teamSlot ^ 1;
+
+        const healthRoll = hashUnit(this.seed, teamSlot, 0, 40);
+        const healthRatio = healthRoll < 0.68
+          ? 0.72 + healthRoll / 0.68 * 0.28
+          : 1;
+        const airborne = hashUnit(this.seed, teamSlot, 0, 41) < 0.34;
+        const footY = airborne
+          ? 0.28 + hashUnit(this.seed, teamSlot, 0, 42) * 0.72
+          : WAR_FLOOR_Y;
+        const verticalVelocity = airborne
+          ? 2.4 + hashUnit(this.seed, teamSlot, 0, 43) * 3.8
+          : 0;
+        for (const player of [red, blue]) {
+          player.health = Math.max(1, player.maxHealth * healthRatio);
+          player.position[1] = footY;
+          player.grounded = !airborne;
+          player.verticalVelocity = verticalVelocity;
+          player.airborneSince = airborne ? now - 120 : 0;
+          player.botJumpCount = airborne ? 1 : 0;
+          player.botLastProgressPosition = copyVector(player.position);
+          player.botLastProgressAt = now;
+          player.botNextDodgeAt = now +
+            hashUnit(this.seed, teamSlot, 0, 44) * 900;
+          player.lastAttackAt = now -
+            WAR_CLASSES[player.classId].attackMs * player.botCadenceScale *
+              hashUnit(this.seed, teamSlot, 0, 45);
+        }
+      }
+    }
+
+    for (const player of this.players) {
+      const target = this.players[player.botTargetSlot];
+      const offsetX = target.position[0] - player.position[0];
+      const offsetZ = target.position[2] - player.position[2];
+      const distance = Math.max(0.001, Math.hypot(offsetX, offsetZ));
+      const strafeSign = player.botDodgeSign *
+        ((player.team ^ this.teamSideSwap) === 0 ? 1 : -1);
+      const strafeSpeed = 1.8 + hashUnit(this.seed, player.teamSlot, 0, 46) * 2.2;
+      player.velocity = [
+        (-offsetZ / distance) * strafeSign * strafeSpeed,
+        player.verticalVelocity,
+        (offsetX / distance) * strafeSign * strafeSpeed,
+      ];
+      player.yaw = Math.atan2(-offsetX, -offsetZ);
+      if (hashUnit(this.seed, player.teamSlot, 0, 47) < 0.42) {
+        player.botDodgeUntil = now + 280 +
+          hashUnit(this.seed, player.teamSlot, 0, 48) * 360;
+        player.botDodgeCount = 1;
+      }
+      player.history = [{ at: now, position: copyVector(player.position) }];
+    }
   }
 
   connectedHumans() {
@@ -246,9 +412,10 @@ export class WarRoom {
 
   eligibleBotForTeam(team, now) {
     this.clearExpiredReservations(now);
-    return this.players.find(
+    const eligible = this.players.filter(
       (player) => player.team === team && player.bot && !player.token,
-    ) ?? null;
+    );
+    return eligible.find((player) => !player.dead) ?? eligible[0] ?? null;
   }
 
   canJoin(now = Date.now()) {
@@ -284,7 +451,38 @@ export class WarRoom {
     player.lastSequence = 0;
     player.lastShotId = 0;
     this.setClass(player, normalizeWarClass(requestedClass), false);
-    this.respawn(player, now, false);
+    if (player.dead) {
+      this.respawn(player, now, false);
+      player.damageProtectionUntil = now + HUMAN_DROP_IN_PROTECTION_MS;
+    } else {
+      // A joining human takes over the living bot's active skirmish position
+      // instead of materializing back on an empty deployment line. Reset only
+      // transient bot/physics state so the first frame opens inside the battle.
+      player.position[1] = WAR_FLOOR_Y;
+      player.velocity = [0, 0, 0];
+      player.knockbackVelocity = [0, 0, 0];
+      player.verticalVelocity = 0;
+      player.grounded = true;
+      player.airborneSince = 0;
+      player.sliding = false;
+      player.slideInputHeld = false;
+      player.slideEndsAt = 0;
+      player.slideCooldownUntil = 0;
+      player.wallRunning = false;
+      player.wallRunStartedAt = 0;
+      player.acceptedHorizontalSpeed = 0;
+      player.lastStateAt = now;
+      player.lastPhysicsAt = now;
+      player.movementCredit = MAX_MOVEMENT_CREDIT;
+      player.history = [{ at: now, position: copyVector(player.position) }];
+      player.lastAttackAt = now;
+      player.botPath = [];
+      player.botPathIndex = 0;
+      player.botPathGoal = null;
+      player.botStuckTicks = 0;
+      player.botDodgeUntil = 0;
+      player.damageProtectionUntil = now + HUMAN_DROP_IN_PROTECTION_MS;
+    }
     session.room = this;
     session.slot = player.slot;
     session.team = player.team;
@@ -853,7 +1051,13 @@ export class WarRoom {
     return transfer > 0;
   }
 
-  performRangedAttack(shooter, direction, now, attackId = shooter.attackSequence) {
+  performRangedAttack(
+    shooter,
+    direction,
+    now,
+    attackId = shooter.attackSequence,
+    damageScale = 1,
+  ) {
     const definition = WAR_CLASSES[shooter.classId];
     const origin = [
       shooter.position[0],
@@ -873,6 +1077,7 @@ export class WarRoom {
           component * definition.projectileSpeed),
         remaining: definition.range,
         updatedAt: now,
+        damageScale,
       };
       this.projectiles.push(projectile);
       return {
@@ -895,9 +1100,10 @@ export class WarRoom {
       : definition.spread * (
         1 + clamp(Math.hypot(shooter.velocity[0], shooter.velocity[2]) / 12, 0, 0.3)
       ) * (shooter.grounded ? 1 : 1.42);
+    const spreadSlot = shooter.bot ? shooter.teamSlot : shooter.slot;
     const seed = (
       this.seed ^
-      Math.imul(shooter.slot + 3, 7_919) ^
+      Math.imul(spreadSlot + 3, 7_919) ^
       Math.imul(Number(attackId) || 0, 2_654_435_761)
     ) >>> 0;
     const traces = spreadDirections(
@@ -923,7 +1129,7 @@ export class WarRoom {
         const falloff = shooter.classId === 'ember'
           ? clamp(1.15 - trace.distance / 38, 0.32, 1)
           : 1;
-        const pelletDamage = definition.damage * falloff * (
+        const pelletDamage = definition.damage * damageScale * falloff * (
           trace.headshot ? definition.headMultiplier : 1
         );
         const entry = pendingHits.get(trace.target) ?? {
@@ -1047,7 +1253,7 @@ export class WarRoom {
       const ownerScale = target.slot === projectile.owner ? 0.5 : 1;
       const applied = this.applyDamage(
         target,
-        definition.damage * falloff * ownerScale,
+        definition.damage * (projectile.damageScale ?? 1) * falloff * ownerScale,
         this.players[projectile.owner],
         now,
       );
@@ -1102,7 +1308,7 @@ export class WarRoom {
     }, null, { volatile: true });
   }
 
-  performGreatswordAttack(shooter, direction, now) {
+  performGreatswordAttack(shooter, direction, now, damageScale = 1) {
     const definition = WAR_CLASSES.greatsword;
     const forward = normalize([direction[0], 0, direction[2]]) ?? [0, 0, -1];
     const maximumDistanceSquared = definition.range * definition.range;
@@ -1124,7 +1330,12 @@ export class WarRoom {
     candidates.sort((first, second) => first.squared - second.squared);
     const hits = [];
     for (const { target } of candidates.slice(0, GREAT_SWORD_MAX_TARGETS)) {
-      const damage = this.applyDamage(target, definition.damage, shooter, now);
+      const damage = this.applyDamage(
+        target,
+        definition.damage * damageScale,
+        shooter,
+        now,
+      );
       if (damage <= 0) continue;
       hits.push({
         target: target.slot,
@@ -1150,7 +1361,16 @@ export class WarRoom {
     ) {
       return 0;
     }
-    const damage = Math.min(target.health, Math.max(0, requestedDamage));
+    const dropInScale = (
+      !this.pendingBotDamage &&
+      target.human &&
+      target.connected &&
+      now < (target.damageProtectionUntil ?? 0)
+    ) ? HUMAN_DROP_IN_DAMAGE_SCALE : 1;
+    const damage = Math.min(
+      target.health,
+      Math.max(0, requestedDamage) * dropInScale,
+    );
     if (damage <= 0) return 0;
     if (this.pendingBotDamage) {
       this.pendingBotDamage.push({ target, damage, attacker, now });
@@ -1184,9 +1404,10 @@ export class WarRoom {
       this.setClass(player, player.pendingClassId, false);
     }
     const definition = WAR_CLASSES[player.classId];
-    player.position = warSpawnForSlot(player.team, player.teamSlot);
+    const physicalTeam = player.team ^ this.teamSideSwap;
+    player.position = warSpawnForSlot(physicalTeam, player.teamSlot);
     player.velocity = [0, 0, 0];
-    player.yaw = warSpawnYaw(player.team);
+    player.yaw = warSpawnYaw(physicalTeam);
     player.pitch = 0;
     player.focused = false;
     player.grounded = true;
@@ -1214,6 +1435,20 @@ export class WarRoom {
     player.movementCredit = MAX_MOVEMENT_CREDIT;
     player.history = [{ at: now, position: copyVector(player.position) }];
     player.lastAttackAt = now;
+    player.botTargetSlot = null;
+    player.botTargetRefreshAt = 0;
+    player.botPath = [];
+    player.botPathIndex = 0;
+    player.botPathGoal = null;
+    player.botStuckTicks = 0;
+    player.botRecoveryUntil = 0;
+    player.botRecoveryRepathAt = 0;
+    player.botLastProgressAt = now;
+    player.botLastProgressPosition = copyVector(player.position);
+    player.botDodgeUntil = 0;
+    player.botNextDodgeAt = now + BOT_DODGE_MIN_MS +
+      hashUnit(this.seed, player.teamSlot, this.botTick, 60) *
+        BOT_DODGE_VARIANCE_MS;
     if (announce && player.human && player.connected) {
       this.broadcast({
         type: 'war_event',
@@ -1238,22 +1473,216 @@ export class WarRoom {
     return [
       Math.cos(angle) * ring,
       0.02,
-      Math.sin(angle) * ring * (player.team === 0 ? 1 : -1),
+      Math.sin(angle) * ring *
+        ((player.team ^ this.teamSideSwap) === 0 ? 1 : -1),
     ];
+  }
+
+  botDecisionPosition(player) {
+    return this.botDecisionPositions?.[player.slot] ?? player.position;
+  }
+
+  botHasLineOfSight(source, target) {
+    if (!this.botDecisionPositions) return hasWarLineOfSight(source, target);
+    return hasWarLineOfSight(
+      { position: this.botDecisionPosition(source) },
+      { position: this.botDecisionPosition(target) },
+    );
+  }
+
+  botWaypoint(player, destination, forceRepath = false) {
+    const pathGoal = player.botPathGoal;
+    const goalChanged = !pathGoal || distanceSquared(pathGoal, destination) > 1;
+    if (
+      !forceRepath &&
+      !goalChanged &&
+      this.botNavigator.segmentIsWalkable(player.position, destination)
+    ) {
+      player.botPath = [];
+      player.botPathIndex = 0;
+      return destination;
+    }
+    if (
+      forceRepath ||
+      goalChanged ||
+      !Array.isArray(player.botPath) ||
+      player.botPathIndex >= player.botPath.length
+    ) {
+      player.botPath = this.botNavigator.findPath(player.position, destination);
+      player.botPathIndex = 0;
+      player.botPathGoal = copyVector(destination);
+    }
+    while (
+      player.botPathIndex < player.botPath.length - 1 &&
+      distanceSquared(player.position, player.botPath[player.botPathIndex]) < 1.45
+    ) {
+      player.botPathIndex += 1;
+    }
+    for (
+      let index = player.botPath.length - 1;
+      index > player.botPathIndex;
+      index -= 1
+    ) {
+      if (!this.botNavigator.segmentIsWalkable(player.position, player.botPath[index])) {
+        continue;
+      }
+      player.botPathIndex = index;
+      break;
+    }
+    return player.botPath[player.botPathIndex] ?? destination;
+  }
+
+  selectBotTarget(player, range, now = this.updatedAt) {
+    const rangeSquared = range * range;
+    const playerPosition = this.botDecisionPosition(player);
+    const validTarget = (candidate) => Boolean(
+      candidate &&
+      candidate.team !== player.team &&
+      !candidate.dead &&
+      distanceSquared(
+        playerPosition,
+        this.botDecisionPosition(candidate),
+      ) < rangeSquared &&
+      this.botHasLineOfSight(player, candidate)
+    );
+    const current = this.players[player.botTargetSlot];
+    if (now < player.botTargetRefreshAt && validTarget(current)) return current;
+
+    const preferredSlot = player.team === 0
+      ? WAR_TEAM_SIZE + (player.teamSlot ^ 1)
+      : player.teamSlot ^ 1;
+    const preferred = this.players[preferredSlot];
+    let target = validTarget(preferred) ? preferred : null;
+    let nearestScore = target
+      ? distanceSquared(playerPosition, this.botDecisionPosition(target)) * 0.72
+      : rangeSquared;
+    for (const candidate of this.players) {
+      if (!validTarget(candidate)) continue;
+      const affinity = candidate.teamSlot === (player.teamSlot ^ 1) ? 0.72 : 1;
+      const score = distanceSquared(
+        playerPosition,
+        this.botDecisionPosition(candidate),
+      ) * affinity;
+      if (
+        score > nearestScore ||
+        (score === nearestScore && target && candidate.slot > target.slot)
+      ) continue;
+      target = candidate;
+      nearestScore = score;
+    }
+    player.botTargetSlot = target?.slot ?? preferredSlot;
+    player.botTargetRefreshAt = now + 320 +
+      hashUnit(this.seed, player.teamSlot, this.botTick, 70) * 260;
+    return target;
   }
 
   updateBotMovement(player, deltaSeconds, now = this.updatedAt) {
     player.lastPhysicsAt = Math.max(Number(player.lastPhysicsAt) || now, now);
     this.integrateKnockback(player, deltaSeconds);
-    this.integrateVerticalMotion(player, deltaSeconds, now);
     const knockback = player.knockbackVelocity ?? [0, 0, 0];
     const knockbackSpeed = Math.hypot(knockback[0], knockback[2]);
     const controlScale = clamp(1 - knockbackSpeed / 4, 0, 1);
-    const destination = this.botDestination(player);
-    const offsetX = destination[0] - player.position[0];
-    const offsetZ = destination[2] - player.position[2];
-    const distance = Math.hypot(offsetX, offsetZ);
+    const definition = WAR_CLASSES[player.classId];
+    const strategicDestination = this.botDestination(player);
+    const engagementRange = Math.min(
+      46,
+      Math.max(12, definition.range * (player.classId === 'greatsword' ? 2.1 : 0.72)),
+    );
+    const target = this.selectBotTarget(player, engagementRange, now);
+    const stuckAtStart = player.botStuckTicks >= BOT_STUCK_REPATH_TICKS;
+    if (stuckAtStart) {
+      player.botRecoveryUntil = Math.max(
+        player.botRecoveryUntil,
+        now + BOT_RECOVERY_MIN_MS,
+      );
+    }
+    let recovering = now < player.botRecoveryUntil;
+
+    if (target && !recovering && now >= player.botNextDodgeAt) {
+      player.botDodgeCount += 1;
+      player.botDodgeSign = hashUnit(
+        this.seed,
+        player.teamSlot,
+        player.botDodgeCount,
+        71,
+      ) < 0.5 ? -1 : 1;
+      player.botDodgeUntil = now + BOT_DODGE_DURATION_MIN_MS +
+        hashUnit(this.seed, player.teamSlot, player.botDodgeCount, 72) *
+          BOT_DODGE_DURATION_VARIANCE_MS;
+      player.botNextDodgeAt = now + BOT_DODGE_MIN_MS +
+        hashUnit(this.seed, player.teamSlot, player.botDodgeCount, 73) *
+          BOT_DODGE_VARIANCE_MS;
+    }
+    const dodgeActive = target && !recovering && now < player.botDodgeUntil;
+    const jumpRequested = Boolean(
+      player.grounded &&
+      (
+        player.botStuckTicks >= BOT_STUCK_JUMP_TICKS ||
+        (
+          dodgeActive &&
+          hashUnit(this.seed, player.teamSlot, player.botDodgeCount, 74) < 0.58
+        )
+      )
+    );
+    if (jumpRequested) player.botJumpCount += 1;
+    this.integrateVerticalMotion(player, deltaSeconds, now, { jumpRequested });
+
+    const forceRecoveryRepath = stuckAtStart && now >= player.botRecoveryRepathAt;
+    if (forceRecoveryRepath) {
+      player.botRecoveryRepathAt = now + BOT_RECOVERY_REPATH_MS;
+    }
+    let movementTarget = this.botWaypoint(
+      player,
+      strategicDestination,
+      forceRecoveryRepath,
+    );
+    let offsetX = movementTarget[0] - player.position[0];
+    let offsetZ = movementTarget[2] - player.position[2];
+    let distance = Math.hypot(offsetX, offsetZ);
+    let directionX = distance > 0.001 ? offsetX / distance : 0;
+    let directionZ = distance > 0.001 ? offsetZ / distance : 0;
+    let speedScale = 0.92;
+
+    if (target && !recovering) {
+      const targetPosition = this.botDecisionPosition(target);
+      const targetX = targetPosition[0] - player.position[0];
+      const targetZ = targetPosition[2] - player.position[2];
+      const targetDistance = Math.max(0.001, Math.hypot(targetX, targetZ));
+      const towardX = targetX / targetDistance;
+      const towardZ = targetZ / targetDistance;
+      const baseStrafeSign = player.botDodgeSign *
+        ((player.team ^ this.teamSideSwap) === 0 ? 1 : -1);
+      const strafeX = -towardZ * baseStrafeSign;
+      const strafeZ = towardX * baseStrafeSign;
+      const idealRange = player.classId === 'greatsword'
+        ? 2.5
+        : player.classId === 'knives'
+          ? 12
+          : player.classId === 'ember'
+            ? 10
+            : clamp(definition.range * 0.3, 14, 28);
+      const rangeError = clamp((targetDistance - idealRange) / Math.max(3, idealRange), -1, 1);
+      const radialWeight = Math.abs(rangeError) < 0.13 ? 0.08 : rangeError;
+      const strafeWeight = dodgeActive ? 1.5 : 0.58;
+      const direction = normalize([
+        towardX * radialWeight + strafeX * strafeWeight,
+        0,
+        towardZ * radialWeight + strafeZ * strafeWeight,
+      ]);
+      if (direction) {
+        directionX = direction[0];
+        directionZ = direction[2];
+      }
+      movementTarget = targetPosition;
+      distance = targetDistance;
+      speedScale = dodgeActive ? 1.08 : 0.78;
+    }
+
     if (distance < 0.28 || controlScale <= 0.001) {
+      if (recovering && distance < 0.28) {
+        player.botStuckTicks = 0;
+        player.botRecoveryUntil = 0;
+      }
       player.acceptedHorizontalSpeed = 0;
       player.velocity = [
         knockback[0],
@@ -1262,10 +1691,8 @@ export class WarRoom {
       ];
       return;
     }
-    const speed = WAR_CLASSES[player.classId].speed;
-    let directionX = offsetX / distance;
-    let directionZ = offsetZ / distance;
-    const stride = Math.min(distance, speed * controlScale * deltaSeconds);
+    let speed = definition.speed * speedScale;
+    let stride = Math.min(distance, speed * controlScale * deltaSeconds);
     const movementOrigin = copyVector(player.position);
     let requested = [
       player.position[0] + directionX * stride,
@@ -1273,8 +1700,52 @@ export class WarRoom {
       player.position[2] + directionZ * stride,
     ];
     let moved = moveWarBody(player.position, requested);
-    if (distanceSquared(moved, player.position) < 0.0001) {
-      const turn = hashUnit(this.seed, player.slot, this.botTick, 31) < 0.5 ? -1 : 1;
+    let movedDistance = Math.sqrt(distanceSquared(moved, player.position));
+    let minimumProgress = Math.max(0.025, stride * 0.16);
+    if (movedDistance < minimumProgress && (target || recovering)) {
+      recovering = true;
+      player.botRecoveryUntil = Math.max(
+        player.botRecoveryUntil,
+        now + BOT_RECOVERY_MIN_MS,
+      );
+      const forceRepath = now >= player.botRecoveryRepathAt;
+      if (forceRepath) player.botRecoveryRepathAt = now + BOT_RECOVERY_REPATH_MS;
+      const recovery = this.botWaypoint(
+        player,
+        strategicDestination,
+        forceRepath,
+      );
+      offsetX = recovery[0] - player.position[0];
+      offsetZ = recovery[2] - player.position[2];
+      const recoveryDistance = Math.hypot(offsetX, offsetZ);
+      if (recoveryDistance > 0.001) {
+        directionX = offsetX / recoveryDistance;
+        directionZ = offsetZ / recoveryDistance;
+      }
+      const recoverySpeed = definition.speed * 0.92;
+      const recoveryStride = Math.min(
+        recoveryDistance,
+        recoverySpeed * controlScale * deltaSeconds,
+      );
+      requested = [
+        player.position[0] + directionX * recoveryStride,
+        player.position[1],
+        player.position[2] + directionZ * recoveryStride,
+      ];
+      const recoveryMove = moveWarBody(player.position, requested);
+      const recoveryMovedDistance = Math.sqrt(
+        distanceSquared(recoveryMove, player.position),
+      );
+      if (recoveryMovedDistance > movedDistance) {
+        moved = recoveryMove;
+        movedDistance = recoveryMovedDistance;
+        speed = recoverySpeed;
+        stride = recoveryStride;
+        minimumProgress = Math.max(0.025, stride * 0.16);
+      }
+    }
+    if (movedDistance < 0.01) {
+      const turn = hashUnit(this.seed, player.teamSlot, this.botTick, 75) < 0.5 ? -1 : 1;
       [directionX, directionZ] = [-directionZ * turn, directionX * turn];
       requested = [
         player.position[0] + directionX * stride,
@@ -1282,12 +1753,26 @@ export class WarRoom {
         player.position[2] + directionZ * stride,
       ];
       moved = moveWarBody(player.position, requested);
+      movedDistance = Math.sqrt(distanceSquared(moved, player.position));
     }
     player.position = moved;
     const acceptedDistance = Math.hypot(
       player.position[0] - movementOrigin[0],
       player.position[2] - movementOrigin[2],
     );
+    if (acceptedDistance < minimumProgress) {
+      player.botStuckTicks += 1;
+      if (player.botStuckTicks >= BOT_STUCK_REPATH_TICKS) {
+        player.botRecoveryUntil = Math.max(
+          player.botRecoveryUntil,
+          now + BOT_RECOVERY_MIN_MS,
+        );
+      }
+    } else {
+      player.botStuckTicks = 0;
+      player.botLastProgressAt = now;
+      player.botLastProgressPosition = copyVector(player.position);
+    }
     player.acceptedHorizontalSpeed = deltaSeconds > 0
       ? acceptedDistance / deltaSeconds
       : 0;
@@ -1296,21 +1781,83 @@ export class WarRoom {
       player.verticalVelocity,
       directionZ * speed * controlScale + knockback[2],
     ];
-    player.yaw = Math.atan2(-directionX, -directionZ);
+    if (target) {
+      const targetPosition = this.botDecisionPosition(target);
+      const aimX = targetPosition[0] - player.position[0];
+      const aimZ = targetPosition[2] - player.position[2];
+      player.yaw = Math.atan2(-aimX, -aimZ);
+    } else {
+      player.yaw = Math.atan2(-directionX, -directionZ);
+    }
+    player.focused = false;
+    player.sliding = Boolean(
+      dodgeActive && !recovering && player.grounded && speed > 6.2,
+    );
   }
 
   nearestBotTarget(player, range) {
-    const rangeSquared = range * range;
-    let target = null;
-    let nearest = rangeSquared;
-    for (const candidate of this.players) {
-      if (candidate.team === player.team || candidate.dead) continue;
-      const squared = distanceSquared(player.position, candidate.position);
-      if (squared >= nearest || !hasWarLineOfSight(player, candidate)) continue;
-      target = candidate;
-      nearest = squared;
-    }
-    return target;
+    return this.selectBotTarget(player, range, this.updatedAt);
+  }
+
+  botAim(player, target, definition) {
+    const targetVelocity = target.velocity ?? [0, 0, 0];
+    const distance = Math.sqrt(distanceSquared(player.position, target.position));
+    const leadSeconds = definition.projectile
+      ? Math.min(0.55, distance / Math.max(1, definition.projectileSpeed))
+      : 0.08;
+    const origin = [
+      player.position[0],
+      player.position[1] + WAR_STANDING_EYE_HEIGHT,
+      player.position[2],
+    ];
+    const center = [
+      target.position[0] + (Number(targetVelocity[0]) || 0) * leadSeconds,
+      target.position[1] + 1 + (Number(targetVelocity[1]) || 0) * leadSeconds,
+      target.position[2] + (Number(targetVelocity[2]) || 0) * leadSeconds,
+    ];
+    const intendedHit = hashUnit(
+      this.seed,
+      player.teamSlot,
+      player.attackSequence,
+      80,
+    ) < clamp(
+      player.botAccuracy - distance / Math.max(1, definition.range) * 0.12,
+      0.28,
+      0.55,
+    );
+    const base = normalize([
+      center[0] - origin[0],
+      center[1] - origin[1],
+      center[2] - origin[2],
+    ]) ?? [
+      0,
+      0,
+      (player.team ^ this.teamSideSwap) === 0 ? -1 : 1,
+    ];
+    const right = normalize([-base[2], 0, base[0]]) ?? [1, 0, 0];
+    const side = hashUnit(
+      this.seed,
+      player.teamSlot,
+      player.attackSequence,
+      81,
+    ) < 0.5 ? -1 : 1;
+    const horizontalMiss = intendedHit
+      ? (hashUnit(this.seed, player.teamSlot, player.attackSequence, 82) - 0.5) * 0.34
+      : side * (
+        (definition.projectile ? definition.splashRadius + 2.4 : 1.05) +
+        hashUnit(this.seed, player.teamSlot, player.attackSequence, 83) * 1.45
+      );
+    const verticalMiss = intendedHit
+      ? (hashUnit(this.seed, player.teamSlot, player.attackSequence, 84) - 0.5) * 0.24
+      : (hashUnit(this.seed, player.teamSlot, player.attackSequence, 85) - 0.5) * 2.1;
+    return {
+      direction: normalize([
+        center[0] + right[0] * horizontalMiss - origin[0],
+        center[1] + verticalMiss - origin[1],
+        center[2] + right[2] * horizontalMiss - origin[2],
+      ]) ?? base,
+      intendedHit,
+    };
   }
 
   updateBotAttack(player, now) {
@@ -1321,51 +1868,115 @@ export class WarRoom {
       this.startReload(player, now);
       return;
     }
-    if (now - player.lastAttackAt < definition.attackMs) return;
-    const target = this.nearestBotTarget(player, definition.range);
+    const attackInterval = definition.attackMs * player.botCadenceScale;
+    if (now - player.lastAttackAt < attackInterval) return;
+    const target = this.selectBotTarget(player, definition.range, now);
     if (!target) return;
     player.lastAttackAt = now;
     player.attackSequence += 1;
     if (definition.usesAmmo) player.ammo = Math.max(0, player.ammo - 1);
     const offset = [
       target.position[0] - player.position[0],
-      target.position[1] - player.position[1],
+      target.position[1] + 1 - (player.position[1] + WAR_STANDING_EYE_HEIGHT),
       target.position[2] - player.position[2],
     ];
-    player.yaw = Math.atan2(-offset[0], -offset[2]);
-    const horizontal = Math.hypot(offset[0], offset[2]);
-    player.pitch = Math.atan2(offset[1], Math.max(0.001, horizontal));
-    if (definition.projectile) {
-      const direction = normalize(offset);
-      if (!direction) return;
-      const result = this.performRangedAttack(
+    let result;
+    let intendedHit;
+    if (player.classId === 'greatsword') {
+      intendedHit = hashUnit(
+        this.seed,
+        player.teamSlot,
+        player.attackSequence,
+        86,
+      ) < player.botMeleeAccuracy;
+      const base = normalize([offset[0], 0, offset[2]]) ?? [0, 0, -1];
+      const missAngle = intendedHit ? 0 : (
+        hashUnit(this.seed, player.teamSlot, player.attackSequence, 87) < 0.5
+          ? -1.42
+          : 1.42
+      );
+      const cosine = Math.cos(missAngle);
+      const sine = Math.sin(missAngle);
+      const direction = [
+        base[0] * cosine - base[2] * sine,
+        0,
+        base[0] * sine + base[2] * cosine,
+      ];
+      result = this.performGreatswordAttack(
         player,
         direction,
         now,
-        player.attackSequence,
+        player.botDamageScale,
       );
-      this.broadcast({
-        type: 'war_event',
-        event: 'attack',
-        shooter: player.slot,
-        classId: player.classId,
-        attackSequence: player.attackSequence,
-        ...result,
-      }, null, { volatile: true });
-      return;
+    } else {
+      const aim = this.botAim(player, target, definition);
+      intendedHit = aim.intendedHit;
+      result = this.performRangedAttack(
+        player,
+        aim.direction,
+        now,
+        player.attackSequence,
+        player.botDamageScale,
+      );
     }
-    const hitChance = player.classId === 'greatsword'
-      ? 1
-      : clamp(0.86 - Math.sqrt(distanceSquared(player.position, target.position)) / definition.range * 0.25, 0.58, 0.86);
-    if (hashUnit(this.seed, player.slot, this.botTick, player.attackSequence) > hitChance) return;
-    if (player.classId === 'greatsword') {
-      this.performGreatswordAttack(player, normalize(offset) ?? [0, 0, -1], now);
-      return;
+    player.botShotAttempts = (player.botShotAttempts ?? 0) + 1;
+    if (!intendedHit) {
+      player.botDeliberateMisses = (player.botDeliberateMisses ?? 0) + 1;
     }
-    const direction = normalize(offset);
-    if (direction) {
-      this.performRangedAttack(player, direction, now, player.attackSequence);
+    player.yaw = Math.atan2(-offset[0], -offset[2]);
+    const horizontal = Math.hypot(offset[0], offset[2]);
+    player.pitch = Math.atan2(offset[1], Math.max(0.001, horizontal));
+    const payload = {
+      type: 'war_event',
+      event: 'attack',
+      shooter: player.slot,
+      classId: player.classId,
+      attackSequence: player.attackSequence,
+      ...result,
+    };
+    if (this.pendingBotAttacks) this.pendingBotAttacks.push(payload);
+    else this.broadcast(payload, null, { volatile: true });
+  }
+
+  resolvedBotAttack(payload, resolvedDamage) {
+    if (!Array.isArray(payload.hits)) return payload;
+    const hits = [];
+    for (const hit of payload.hits) {
+      const key = payload.shooter * WAR_COMBATANT_COUNT + hit.target;
+      const damage = resolvedDamage.get(key) ?? 0;
+      if (damage <= 0) continue;
+      hits.push({
+        ...hit,
+        damage: rounded(damage, 10),
+        health: rounded(this.players[hit.target]?.health ?? 0, 10),
+      });
     }
+    const resolved = {
+      ...payload,
+      hit: hits.length > 0,
+      hits,
+      damage: rounded(
+        hits.reduce((total, hit) => total + hit.damage, 0),
+        10,
+      ),
+    };
+    if ('hitCount' in resolved) {
+      resolved.hitCount = hits.reduce(
+        (total, hit) => total + (Number(hit.hitCount) || 1),
+        0,
+      );
+    }
+    if ('headshot' in resolved) {
+      resolved.headshot = hits.some((hit) => hit.headshot);
+    }
+    if ('target' in resolved) {
+      const primary = hits.find((hit) => hit.target === payload.target) ?? hits[0];
+      resolved.target = primary?.target ?? null;
+      if ('targetHealth' in resolved) {
+        resolved.targetHealth = primary?.health ?? null;
+      }
+    }
+    return resolved;
   }
 
   objectiveOccupancy() {
@@ -1390,20 +2001,48 @@ export class WarRoom {
       if (!player.human || !player.connected || player.dead) continue;
       this.advancePassiveMotion(player, now);
     }
-    for (const player of this.players) {
-      if (!player.bot || player.dead) continue;
-      this.updateBotMovement(player, this.botInterval / 1_000, now);
-      this.recordHistory(player, now);
+    // Every bot chooses movement from one frozen world state. Without this,
+    // team 1 (the later slots) reacts to team 0's already-updated positions in
+    // the same tick and receives a systematic pursuit/evasion advantage.
+    this.botDecisionPositions = this.players.map((player) =>
+      copyVector(player.position));
+    try {
+      for (const player of this.players) {
+        if (!player.bot || player.dead) continue;
+        this.updateBotMovement(player, this.botInterval / 1_000, now);
+        this.recordHistory(player, now);
+      }
+    } finally {
+      this.botDecisionPositions = null;
     }
     this.pendingBotDamage = [];
+    this.pendingBotAttacks = [];
     for (const player of this.players) {
       if (!player.bot || player.dead) continue;
       this.updateBotAttack(player, now);
     }
     const pendingDamage = this.pendingBotDamage;
+    const pendingAttacks = this.pendingBotAttacks;
     this.pendingBotDamage = null;
+    this.pendingBotAttacks = null;
+    const resolvedDamage = new Map();
     for (const intent of pendingDamage) {
-      this.applyDamage(intent.target, intent.damage, intent.attacker, intent.now);
+      const damage = this.applyDamage(
+        intent.target,
+        intent.damage,
+        intent.attacker,
+        intent.now,
+      );
+      if (damage <= 0 || !intent.attacker) continue;
+      const key = intent.attacker.slot * WAR_COMBATANT_COUNT + intent.target.slot;
+      resolvedDamage.set(key, (resolvedDamage.get(key) ?? 0) + damage);
+    }
+    for (const payload of pendingAttacks) {
+      this.broadcast(
+        this.resolvedBotAttack(payload, resolvedDamage),
+        null,
+        { volatile: true },
+      );
     }
     this.updateProjectiles(now);
 

@@ -10,6 +10,32 @@ const WAR_COLORS = Object.freeze({
   contested: 0xffd83d,
 });
 
+export const WAR_CENTER_ROAD_SEGMENTS = Object.freeze([
+  Object.freeze({
+    id: 'north', position: Object.freeze([-1.75, 0.012, -56]),
+    size: Object.freeze([11.5, 0.024, 48]), material: 'dirt', kind: 'main-road',
+  }),
+  Object.freeze({
+    id: 'middle', position: Object.freeze([0, 0.012, 0]),
+    size: Object.freeze([12, 0.024, 68]), material: 'dirt', kind: 'main-road',
+  }),
+  Object.freeze({
+    id: 'south', position: Object.freeze([1.75, 0.012, 56]),
+    size: Object.freeze([11.5, 0.024, 48]), material: 'dirt', kind: 'main-road',
+  }),
+]);
+
+export const WAR_SPAWN_TRACK_PATCHES = Object.freeze([
+  Object.freeze({ id: 'north-back', position: Object.freeze([-3.8, 0.014, -86]), size: Object.freeze([3.2, 0.028, 5.8]), rotation: Object.freeze([0, 0.2, 0]), material: 'dirt' }),
+  Object.freeze({ id: 'north-middle', position: Object.freeze([3.2, 0.014, -82]), size: Object.freeze([3, 0.028, 5]), rotation: Object.freeze([0, -0.18, 0]), material: 'dirt' }),
+  Object.freeze({ id: 'north-front', position: Object.freeze([-2, 0.014, -78]), size: Object.freeze([4, 0.028, 4.5]), rotation: Object.freeze([0, 0.12, 0]), material: 'dirt' }),
+  Object.freeze({ id: 'north-crossing', position: Object.freeze([0, 0.018, -64]), size: Object.freeze([21, 0.036, 1.6]), rotation: null, material: 'cobblestone' }),
+  Object.freeze({ id: 'south-back', position: Object.freeze([3.8, 0.014, 86]), size: Object.freeze([3.2, 0.028, 5.8]), rotation: Object.freeze([0, 0.2, 0]), material: 'dirt' }),
+  Object.freeze({ id: 'south-middle', position: Object.freeze([-3.2, 0.014, 82]), size: Object.freeze([3, 0.028, 5]), rotation: Object.freeze([0, -0.18, 0]), material: 'dirt' }),
+  Object.freeze({ id: 'south-front', position: Object.freeze([2, 0.014, 78]), size: Object.freeze([4, 0.028, 4.5]), rotation: Object.freeze([0, 0.12, 0]), material: 'dirt' }),
+  Object.freeze({ id: 'south-crossing', position: Object.freeze([0, 0.018, 64]), size: Object.freeze([21, 0.036, 1.6]), rotation: null, material: 'cobblestone' }),
+]);
+
 function boundsSize(bounds) {
   return [
     bounds[3] - bounds[0],
@@ -35,6 +61,7 @@ export function createFixedCrossedPlane({
   asset,
   width,
   height,
+  visibleBottomRatio = 0,
   name = 'war-fixed-crossed-plane',
   material = null,
   geometry = null,
@@ -59,7 +86,7 @@ export function createFixedCrossedPlane({
   for (const [index, yaw] of [0, Math.PI / 2].entries()) {
     const plane = new THREE.Mesh(sharedGeometry, sharedMaterial);
     plane.name = `${name}-plane-${index}`;
-    plane.position.y = height / 2;
+    plane.position.y = height / 2 - visibleBottomRatio * height;
     plane.rotation.y = yaw;
     plane.castShadow = true;
     plane.receiveShadow = false;
@@ -69,10 +96,61 @@ export function createFixedCrossedPlane({
   return group;
 }
 
+/** Builds a fixed world-plane prop that never turns to follow the camera. */
+export function createFixedPhotoProp({
+  asset,
+  width,
+  height,
+  yaw = 0,
+  visibleBottomRatio = 0,
+  name = 'war-fixed-photo-prop',
+  material = null,
+  geometry = null,
+  alphaTest = 0.035,
+} = {}) {
+  const sharedMaterial = material ?? new THREE.MeshBasicMaterial({
+    map: loadPhotoTexture(asset),
+    transparent: true,
+    alphaTest,
+    depthWrite: true,
+    depthTest: true,
+    fog: true,
+    toneMapped: true,
+    side: THREE.DoubleSide,
+  });
+  const sharedGeometry = geometry ?? new THREE.PlaneGeometry(width, height);
+  const plane = new THREE.Mesh(sharedGeometry, sharedMaterial);
+  plane.name = name;
+  plane.position.y = height / 2 - visibleBottomRatio * height;
+  plane.rotation.y = yaw;
+  plane.castShadow = true;
+  plane.receiveShadow = false;
+  plane.userData.fixedPhotoProp = true;
+  plane.userData.asset = asset;
+  plane.userData.fixedYaw = yaw;
+  return plane;
+}
+
 export class WarArena extends Arena {
   constructor(scene, renderer) {
     super(scene, renderer);
     this.root.name = 'war-arena';
+  }
+
+  clear() {
+    for (const collection of [
+      this.roadBatches,
+      this.surfaceBatches,
+      this.structureBatches,
+      this.structureTrimMeshes,
+    ]) {
+      for (const batch of collection ?? []) batch.dispose();
+    }
+    super.clear();
+    this.roadBatches = [];
+    this.surfaceBatches = [];
+    this.structureBatches = [];
+    this.structureTrimMeshes = [];
   }
 
   activateEnvironment() {
@@ -119,6 +197,47 @@ export class WarArena extends Arena {
     return this.map;
   }
 
+  addInstancedBoxBatches(items, namePrefix) {
+    const groups = new Map();
+    for (const item of items) {
+      const castShadow = item.castShadow !== false;
+      const receiveShadow = item.receiveShadow !== false;
+      const key = `${item.material}:${castShadow ? 1 : 0}:${receiveShadow ? 1 : 0}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push({ ...item, castShadow, receiveShadow });
+    }
+
+    const batches = [];
+    const transform = new THREE.Object3D();
+    for (const [batchIndex, records] of [...groups.values()].entries()) {
+      const first = records[0];
+      const batch = new THREE.InstancedMesh(
+        this.geometry([1, 1, 1]),
+        this.materials[first.material],
+        records.length,
+      );
+      batch.name = `${namePrefix}-${batchIndex}`;
+      batch.castShadow = first.castShadow;
+      batch.receiveShadow = first.receiveShadow;
+      batch.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+      batch.userData.staticBoxBatch = true;
+      batch.userData.sceneryIds = records.map(({ id }) => id).filter(Boolean);
+      for (const [instanceIndex, record] of records.entries()) {
+        transform.position.set(...record.position);
+        transform.rotation.set(...(record.rotation ?? [0, 0, 0]));
+        transform.scale.set(...record.size);
+        transform.updateMatrix();
+        batch.setMatrixAt(instanceIndex, transform.matrix);
+      }
+      batch.instanceMatrix.needsUpdate = true;
+      batch.computeBoundingBox();
+      batch.computeBoundingSphere();
+      this.root.add(batch);
+      batches.push(batch);
+    }
+    return batches;
+  }
+
   buildWarField() {
     this.addBox({
       position: [0, -0.55, 0],
@@ -126,14 +245,24 @@ export class WarArena extends Arena {
       material: 'grass',
       name: 'war-grass-field',
     });
-    this.addBox({
-      position: [0, 0.012, 0],
-      size: [18, 0.024, 194],
-      material: 'dirt',
-      raycast: false,
-      castShadow: false,
-      name: 'war-center-path',
-    });
+    this.roadMeshes = [];
+    const roadInstances = [];
+    for (const road of [...WAR_CENTER_ROAD_SEGMENTS, ...WAR_SPAWN_TRACK_PATCHES]) {
+      const mesh = this.addBox({
+        position: road.position,
+        size: road.size,
+        rotation: road.rotation ?? undefined,
+        material: road.material,
+        raycast: false,
+        castShadow: false,
+        name: `war-road-${road.id}`,
+      });
+      mesh.userData.roadKind = road.kind ?? 'spawn-track';
+      mesh.visible = false;
+      this.roadMeshes.push(mesh);
+      roadInstances.push({ ...road, castShadow: false });
+    }
+    this.roadBatches = this.addInstancedBoxBatches(roadInstances, 'war-road-batch');
     this.addBox({
       position: [0, 0.016, 0],
       size: [74, 0.032, 18],
@@ -143,19 +272,200 @@ export class WarArena extends Arena {
       name: 'war-objective-path',
     });
 
-    for (const [index, bounds] of WAR_MAP.colliders.entries()) {
+    this.surfaceMeshes = [];
+    const surfaceInstances = [];
+    for (const surface of WAR_MAP.surfaces) {
+      const mesh = this.addBox({
+        position: surface.position,
+        size: surface.size,
+        material: surface.material,
+        raycast: false,
+        castShadow: false,
+        name: `war-surface-${surface.id}`,
+      });
+      mesh.userData.sceneryId = surface.id;
+      mesh.visible = false;
+      this.surfaceMeshes.push(mesh);
+      surfaceInstances.push({ ...surface, castShadow: false });
+    }
+    this.surfaceBatches = this.addInstancedBoxBatches(
+      surfaceInstances,
+      'war-surface-batch',
+    );
+
+    for (const [index, bounds] of WAR_MAP.boundaryColliders.entries()) {
       if (index === 0) continue;
-      const boundary = index <= 4;
       this.addBox({
         position: boundsCenter(bounds),
         size: boundsSize(bounds),
-        material: boundary ? 'hedge' : index % 3 === 0 ? 'paleTimber' : 'timber',
-        name: boundary ? `war-boundary-${index}` : `war-cover-${index - 5}`,
+        material: 'hedge',
+        name: `war-boundary-${index}`,
       });
     }
 
+    this.structureMeshes = [];
+    const structureInstances = [];
+    this.structureTrimInstances = [];
+    for (const cover of WAR_MAP.legacyCover) {
+      if (cover.photoReplacementId) continue;
+      const mesh = this.addBox({
+        position: boundsCenter(cover.bounds),
+        size: boundsSize(cover.bounds),
+        material: cover.material,
+        name: `war-${cover.id}`,
+      });
+      mesh.userData.sceneryId = cover.id;
+      mesh.userData.collisionBounds = cover.bounds;
+      mesh.visible = false;
+      this.structureMeshes.push(mesh);
+      structureInstances.push({
+        id: cover.id,
+        position: boundsCenter(cover.bounds),
+        size: boundsSize(cover.bounds),
+        material: cover.material,
+      });
+    }
+    for (const part of WAR_MAP.structureParts) {
+      const mesh = this.addBox({
+        position: part.position,
+        size: part.size,
+        material: part.material,
+        rotation: part.rotation ?? undefined,
+        raycast: part.solid !== false,
+        castShadow: true,
+        name: `war-structure-${part.id}`,
+      });
+      mesh.userData.sceneryId = part.id;
+      mesh.userData.collisionBounds = part.solid === false ? null : part.bounds;
+      mesh.visible = false;
+      this.structureMeshes.push(mesh);
+      structureInstances.push({
+        id: part.id,
+        position: part.position,
+        size: part.size,
+        material: part.material,
+        rotation: part.rotation ?? null,
+      });
+      if (part.role === 'building-wall') this.addBuildingWallTrim(part);
+    }
+    this.structureBatches = this.addInstancedBoxBatches(
+      structureInstances,
+      'war-structure-batch',
+    );
+    this.structureTrimMeshes = this.addInstancedBoxBatches(
+      this.structureTrimInstances,
+      'war-structure-trim-batch',
+    );
+
     this.buildControlPoint();
+    this.buildPhotoProps();
     this.buildFoliage();
+  }
+
+  addBuildingWallTrim(part) {
+    const [width, height, depth] = part.size;
+    if (height < 2.4) return;
+    const alongX = width >= depth;
+    const trimDepth = alongX ? depth + 0.09 : 0.22;
+    const trimWidth = alongX ? 0.22 : width + 0.09;
+    const dominantLength = alongX ? width : depth;
+    const dominantCenter = alongX ? part.position[0] : part.position[2];
+    const edgeInset = Math.min(0.18, dominantLength * 0.1);
+    const postOffsets = [
+      -dominantLength / 2 + edgeInset,
+      dominantLength / 2 - edgeInset,
+    ];
+    if (dominantLength >= 8) postOffsets.splice(1, 0, 0);
+
+    this.structureTrimInstances.push({
+      id: `${part.id}-top`,
+      position: [
+        part.position[0],
+        part.position[1] + height / 2 - 0.24,
+        part.position[2],
+      ],
+      size: alongX
+        ? [width + 0.08, 0.24, depth + 0.09]
+        : [width + 0.09, 0.24, depth + 0.08],
+      material: 'darkTimber',
+    });
+
+    for (const [index, offset] of postOffsets.entries()) {
+      const position = [...part.position];
+      if (alongX) position[0] = dominantCenter + offset;
+      else position[2] = dominantCenter + offset;
+      this.structureTrimInstances.push({
+        id: `${part.id}-post-${index}`,
+        position,
+        size: [trimWidth, Math.max(0.4, height - 0.18), trimDepth],
+        material: 'darkTimber',
+      });
+    }
+  }
+
+  buildPhotoProps() {
+    this.photoPropCutouts = [];
+    this.photoPropMaterials ??= new Map();
+    this.photoPropGeometries ??= new Map();
+    for (const item of WAR_MAP.photoProps) {
+      const alphaTest = item.alphaTest ?? 0.035;
+      const materialKey = `${item.asset}:${alphaTest}`;
+      if (!this.photoPropMaterials.has(materialKey)) {
+        this.photoPropMaterials.set(materialKey, new THREE.MeshBasicMaterial({
+          map: loadPhotoTexture(item.asset),
+          transparent: true,
+          alphaTest,
+          depthWrite: true,
+          depthTest: true,
+          fog: true,
+          toneMapped: true,
+          side: THREE.DoubleSide,
+        }));
+      }
+      const geometryKey = `${item.width}:${item.height}`;
+      if (!this.photoPropGeometries.has(geometryKey)) {
+        this.photoPropGeometries.set(
+          geometryKey,
+          new THREE.PlaneGeometry(item.width, item.height),
+        );
+      }
+      const cutout = createFixedPhotoProp({
+        asset: item.asset,
+        width: item.width,
+        height: item.height,
+        yaw: item.yaw ?? 0,
+        visibleBottomRatio: item.visibleBottomRatio ?? 0,
+        name: `war-photo-prop-${item.id}`,
+        material: this.photoPropMaterials.get(materialKey),
+        geometry: this.photoPropGeometries.get(geometryKey),
+        alphaTest,
+      });
+      cutout.position.x = item.position[0];
+      cutout.position.y += item.position[1] ?? 0;
+      cutout.position.z = item.position[2];
+      this.root.add(cutout);
+      const record = {
+        id: item.id,
+        asset: item.asset,
+        cutout,
+        sprite: cutout,
+        position: [...item.position],
+        collisionBounds: item.collisionBounds,
+        visibleBottomRatio: item.visibleBottomRatio ?? 0,
+        collisionProxy: null,
+      };
+      if (item.collisionBounds) {
+        record.collisionProxy = this.addInvisiblePropCollision(
+          item.collisionBounds,
+          `war-${item.id}`,
+        );
+        // Explicit Raycaster queries include invisible objects, so the proxy
+        // still blocks local shots without spending a transparent render pass.
+        record.collisionProxy.visible = false;
+      }
+      this.photoProps.push(record);
+      this.photoPropCutouts.push(cutout);
+    }
   }
 
   buildControlPoint() {
@@ -228,8 +538,10 @@ export class WarArena extends Arena {
         name: `war-${item.id}`,
         material: this.foliageMaterials.get(item.type),
         geometry: this.foliageGeometries.get(geometryKey),
+        visibleBottomRatio: item.visibleBottomRatio ?? 0,
       });
       cutout.position.set(...item.position);
+      cutout.rotation.y = item.yaw ?? 0;
       this.root.add(cutout);
       this.foliageCutouts.push(cutout);
     }
@@ -267,8 +579,12 @@ export class WarArena extends Arena {
   dispose() {
     for (const material of this.foliageMaterials?.values() ?? []) material.dispose();
     for (const geometry of this.foliageGeometries?.values() ?? []) geometry.dispose();
+    for (const material of this.photoPropMaterials?.values() ?? []) material.dispose();
+    for (const geometry of this.photoPropGeometries?.values() ?? []) geometry.dispose();
     this.foliageMaterials?.clear();
     this.foliageGeometries?.clear();
+    this.photoPropMaterials?.clear();
+    this.photoPropGeometries?.clear();
     super.dispose();
   }
 }

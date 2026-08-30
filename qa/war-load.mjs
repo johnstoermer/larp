@@ -1,5 +1,6 @@
 import { writeFile } from 'node:fs/promises';
 import WebSocket from 'ws';
+import { PROTOCOL_VERSION } from '../server/multiplayer/config.js';
 
 const baseUrl = process.env.LARP_URL || 'http://127.0.0.1:8080';
 const durationMs = Number(process.env.LARP_WAR_LOAD_DURATION || 4_000);
@@ -45,7 +46,7 @@ function createClient(index) {
   socket.on('open', () => {
     socket.send(JSON.stringify({
       type: 'hello',
-      version: 4,
+      version: PROTOCOL_VERSION,
       name: `WAR LOAD ${String(index).padStart(2, '0')}`,
     }));
   });
