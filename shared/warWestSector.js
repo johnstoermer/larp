@@ -2,7 +2,10 @@
 // navigation. North is negative Z. Every physical part is an axis-aligned box
 // so the server and client can consume the same immutable bounds.
 
-import { rotatedFootprintBounds } from './warSceneryGeometry.js';
+import {
+  fixedPhotoPropCollisionBounds,
+  quantizeFixedPhotoPropYaw,
+} from './warSceneryGeometry.js';
 
 const freezeVector = (values) => Object.freeze([...values]);
 
@@ -47,10 +50,10 @@ function surface(id, position, size, material = 'dirt') {
 }
 
 const PROP_SHAPES = Object.freeze({
-  'wooden-cart': Object.freeze({ width: 5.3, height: 3.55, footprint: [4.8, 1.8] }),
-  'hay-bales': Object.freeze({ width: 5.5, height: 2.2, footprint: [4.6, 1.6] }),
-  'canvas-tent': Object.freeze({ width: 4.8, height: 3.2, footprint: [4, 2.6] }),
-  'archery-target': Object.freeze({ width: 2.4, height: 2.85, footprint: [2.2, 0.5] }),
+  'wooden-cart': Object.freeze({ width: 5.3, height: 3.55 }),
+  'hay-bales': Object.freeze({ width: 5.5, height: 2.2 }),
+  'canvas-tent': Object.freeze({ width: 4.8, height: 3.2 }),
+  'archery-target': Object.freeze({ width: 2.4, height: 2.85 }),
 });
 
 const PROP_VISIBLE_BOTTOM = Object.freeze({
@@ -62,6 +65,7 @@ const PROP_VISIBLE_BOTTOM = Object.freeze({
 
 function photoProp(id, type, x, z, { yaw = 0, solid = true } = {}) {
   const shape = PROP_SHAPES[type];
+  const fixedYaw = quantizeFixedPhotoPropYaw(yaw);
   const collisionHeight = type === 'archery-target'
     ? 2.15
     : type === 'canvas-tent'
@@ -70,12 +74,11 @@ function photoProp(id, type, x, z, { yaw = 0, solid = true } = {}) {
         ? 1.9
         : 1.45;
   const collisionBounds = solid
-    ? freezeVector(rotatedFootprintBounds(
+    ? freezeVector(fixedPhotoPropCollisionBounds(
       [x, 0, z],
-      shape.footprint[0],
-      shape.footprint[1],
+      shape.width,
       collisionHeight,
-      yaw,
+      fixedYaw,
     ))
     : null;
   return Object.freeze({
@@ -86,7 +89,9 @@ function photoProp(id, type, x, z, { yaw = 0, solid = true } = {}) {
     width: shape.width,
     height: shape.height,
     visibleBottomRatio: PROP_VISIBLE_BOTTOM[type],
-    yaw,
+    yaw: fixedYaw,
+    presentation: 'fixed-plane',
+    fixedPlane: true,
     solid,
     collisionBounds,
   });

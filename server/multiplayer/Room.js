@@ -28,6 +28,7 @@ const MAX_HISTORY_MS = 1100;
 const MAX_STATE_SPEED = 18;
 const MAX_MOVEMENT_CREDIT = 1.5;
 const MAX_MESSAGES_AHEAD = 2048;
+const KILL_CREDIT_WINDOW_MS = 10_000;
 
 function copyVector(vector) {
   return [vector[0], vector[1], vector[2]];
@@ -61,6 +62,12 @@ function createPlayer(session, slot, mapIndex) {
     health: 100,
     dead: false,
     deathAt: Infinity,
+    deathCredited: false,
+    lastAttackerSlot: null,
+    lastDamageAt: -Infinity,
+    kills: 0,
+    deaths: 0,
+    assists: 0,
     weapon: 'knives',
     ammo: WEAPONS.knives.ammo,
     reserve: WEAPONS.knives.reserve,
@@ -207,6 +214,9 @@ export class Room {
       player.health = 100;
       player.dead = false;
       player.deathAt = Infinity;
+      player.deathCredited = false;
+      player.lastAttackerSlot = null;
+      player.lastDamageAt = -Infinity;
       player.weapon = 'knives';
       player.ammo = WEAPONS.knives.ammo;
       player.reserve = WEAPONS.knives.reserve;
@@ -333,7 +343,12 @@ export class Room {
       this.winner = null;
       this.resultReason = null;
       this.destroyAt = Infinity;
-      for (const entry of this.players) entry.rematch = false;
+      for (const entry of this.players) {
+        entry.rematch = false;
+        entry.kills = 0;
+        entry.deaths = 0;
+        entry.assists = 0;
+      }
       this.prepareRound(now);
       this.broadcastMatchFound(false);
     }
@@ -401,7 +416,36 @@ export class Room {
     if (this.phase === 'playing' && player.position[1] < -8 && !player.dead) {
       player.health = 0;
       player.dead = true;
+      player.deathAt = now;
+      this.creditDeaths(now);
       this.finishTake(this.opponentOf(player).slot, now, 'fall');
+    }
+  }
+
+  recordDamageSource(target, attackerSlot, damage, now) {
+    if (
+      damage <= 0 ||
+      !Number.isInteger(attackerSlot) ||
+      attackerSlot === target.slot ||
+      !this.players[attackerSlot]
+    ) return;
+    target.lastAttackerSlot = attackerSlot;
+    target.lastDamageAt = now;
+  }
+
+  creditDeaths(now) {
+    for (const player of this.players) {
+      if (!player.dead || player.deathCredited) continue;
+      player.deathCredited = true;
+      player.deaths += 1;
+      const attacker = this.players[player.lastAttackerSlot];
+      if (
+        attacker &&
+        attacker !== player &&
+        now - player.lastDamageAt <= KILL_CREDIT_WINDOW_MS
+      ) {
+        attacker.kills += 1;
+      }
     }
   }
 
@@ -562,6 +606,7 @@ export class Room {
     const appliedDamage = Math.min(target.health, totalDamage);
     if (appliedDamage > 0) {
       target.health = Math.max(0, target.health - appliedDamage);
+      this.recordDamageSource(target, shooter.slot, appliedDamage, now);
       if (target.health <= 0) {
         target.dead = true;
         target.deathAt = now;
@@ -723,6 +768,7 @@ export class Room {
       );
       if (amount <= 0) continue;
       player.health = Math.max(0, player.health - amount);
+      this.recordDamageSource(player, projectile.owner, amount, now);
       if (player.health <= 0) player.dead = true;
       const impulse = direction.map((component) => component * 7.5 * falloff);
       impulse[1] = Math.max(3.8 * falloff, impulse[1]);
@@ -797,6 +843,7 @@ export class Room {
 
   resolveDeaths(now, preferredWinner = null) {
     this.pendingResolutionAt = Infinity;
+    this.creditDeaths(now);
     const dead = this.players.map((player) => player.dead);
     if (dead[0] && dead[1]) this.finishTake(null, now, 'mutual');
     else if (dead[0]) this.finishTake(1, now);
@@ -945,6 +992,9 @@ export class Room {
         pitch: Math.round(player.pitch * 10_000) / 10_000,
         health: Math.round(player.health * 10) / 10,
         dead: player.dead,
+        kills: player.kills,
+        deaths: player.deaths,
+        assists: player.assists,
         weapon: player.weapon,
         ammo: player.ammo,
         reserve: player.reserve,

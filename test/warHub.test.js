@@ -6,10 +6,12 @@ import {
   MAX_NEW_SESSIONS_PER_MINUTE,
   MAX_SESSION_RECORDS,
   MAX_WAR_ROOMS,
+  MAX_WAR_ROOMS_PER_MODE,
   MultiplayerHub,
   allowedWebSocketOrigin,
 } from '../server/multiplayer/Hub.js';
 import { WarRoom } from '../server/multiplayer/WarRoom.js';
+import { WAR_COMBATANT_COUNT } from '../shared/warConfig.js';
 
 function createHub() {
   const hub = Object.create(MultiplayerHub.prototype);
@@ -73,6 +75,40 @@ test('war_play joins one additive War room without entering the Arena queue', ()
   ));
 });
 
+test('control and Team Deathmatch requests matchmake into separate balanced War rooms', () => {
+  const hub = createHub();
+  const control = createSession(40);
+  const firstTdm = createSession(41);
+  const secondTdm = createSession(42);
+
+  MultiplayerHub.prototype.handleMessage.call(hub, control, {
+    type: 'war_play',
+    classId: 'greatsword',
+  });
+  MultiplayerHub.prototype.handleMessage.call(hub, firstTdm, {
+    type: 'war_play',
+    classId: 'shortbow',
+    warMode: 'team_deathmatch',
+  });
+  MultiplayerHub.prototype.handleMessage.call(hub, secondTdm, {
+    type: 'war_play',
+    classId: 'knives',
+    variant: 'tdm',
+  });
+
+  assert.equal(hub.rooms.size, 2);
+  assert.equal(control.room.warMode, 'control');
+  assert.equal(firstTdm.room.warMode, 'team_deathmatch');
+  assert.equal(secondTdm.room, firstTdm.room);
+  assert.notEqual(control.room, firstTdm.room);
+  assert.equal(firstTdm.room.phase, 'combat');
+  assert.deepEqual(firstTdm.room.getSummary().teamHumans, [1, 1]);
+  assert.equal(
+    firstTdm.messages.find((message) => message.type === 'war_found').warMode,
+    'team_deathmatch',
+  );
+});
+
 test('mode-scoped War input routes to War handlers and generic Arena input is ignored', () => {
   const hub = createHub();
   const session = createSession(1);
@@ -106,7 +142,7 @@ test('mode-scoped War input routes to War handlers and generic Arena input is ig
   assert.equal(player.pendingClassId, 'greatsword');
 });
 
-test('leaving War frees the human slot and preserves the 80-bot room body', () => {
+test('leaving War frees the human slot and preserves the 40-bot room body', () => {
   const hub = createHub();
   const session = createSession(2);
   hub.joinWar(session, 'crossbow', 2_000);
@@ -118,7 +154,7 @@ test('leaving War frees the human slot and preserves the 80-bot room body', () =
   assert.equal(session.slot, null);
   assert.equal(session.team, null);
   assert.equal(room.connectedHumans().length, 0);
-  assert.equal(room.players.length, 80);
+  assert.equal(room.players.length, WAR_COMBATANT_COUNT);
   assert.ok(session.messages.some((message) => message.type === 'left_match'));
 });
 
@@ -141,10 +177,10 @@ test('leaving War hands the live wounded combatant to a bot without healing it',
   assert.deepEqual(player.position, [17, 0.02, -9]);
 });
 
-test('one full War room rejects overflow instead of allocating another 80-bot room', () => {
+test('one full War room rejects overflow instead of allocating another 40-bot room', () => {
   const hub = createHub();
   const room = new WarRoom({ now: 2_500, seed: 73 });
-  for (let index = 0; index < 80; index += 1) {
+  for (let index = 0; index < WAR_COMBATANT_COUNT; index += 1) {
     assert.ok(room.addSession(createSession(100 + index), 'shortbow', 2_501 + index));
   }
   hub.rooms.add(room);
@@ -152,7 +188,8 @@ test('one full War room rejects overflow instead of allocating another 80-bot ro
 
   hub.joinWar(overflow, 'greatsword', 3_000);
 
-  assert.equal(MAX_WAR_ROOMS, 1);
+  assert.equal(MAX_WAR_ROOMS, 2);
+  assert.equal(MAX_WAR_ROOMS_PER_MODE, 1);
   assert.equal(hub.rooms.size, 1);
   assert.equal(overflow.room, null);
   assert.equal(overflow.messages.at(-1).code, 'WAR_CAPACITY');
@@ -175,7 +212,10 @@ test('War requires compression and rate-limits voluntary re-entry', () => {
   hub.joinWar(session, 'shortbow', 4_201);
   assert.equal(session.room, null);
   assert.equal(session.messages.at(-1).code, 'WAR_REJOIN_DELAY');
-  hub.joinWar(session, 'shortbow', 12_200);
+  hub.joinWar(session, 'shortbow', 9_199);
+  assert.equal(session.room, null);
+  assert.equal(session.messages.at(-1).code, 'WAR_REJOIN_DELAY');
+  hub.joinWar(session, 'shortbow', 9_200);
   assert.equal(session.room, room);
 });
 

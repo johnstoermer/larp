@@ -1,8 +1,9 @@
 # War mode
 
-War is a separate 40-versus-40 control-point match. Arena remains the existing
-one-versus-one mode and shares protocol version 4, while retaining its queue,
-maps, weapons, pickups, rounds, and reconnect behavior.
+War has two separate 20-versus-20 variants on one large map: Control and Team
+Deathmatch. Arena remains the existing one-versus-one mode and shares protocol
+version 6, while retaining its queue, maps, weapons, pickups, rounds, and
+reconnect behavior.
 
 ## Rules and source basis
 
@@ -26,8 +27,8 @@ grace, but they do not publicly specify every timing and edge case. The
 following are explicit LARP implementation choices, not claims about hidden
 Overwatch or Marvel Rivals internals:
 
-1. War is one round on one large map. It does not use best-of-three because a
-   single 80-player round fits the current room and map architecture cleanly.
+1. Control is one round on one large map. It does not use best-of-three because
+   a single 40-player round fits the current room and map architecture cleanly.
 2. The central point is neutral and locked for the first 15 seconds.
 3. An uncontested team captures it in 8 seconds. Extra bodies do not accelerate
    capture. A neutral contest pauses capture at its current value.
@@ -47,9 +48,13 @@ The pure `WarControl` state machine and its tests are the executable rule
 definition. The server, not a browser, supplies occupancy and owns capture,
 percentage, overtime, and the result.
 
+Team Deathmatch is a separate one-round variant on the same map. Control-point
+occupancy and percentage do not score in this mode. Only enemy eliminations add
+to the team score, and the first team to reach 100 kills wins.
+
 ## Match structure
 
-- Two teams contain exactly 40 slots each. An online human takes one team slot;
+- Two teams contain exactly 20 slots each. An online human takes one team slot;
   every unoccupied slot is immediately controlled by a deterministic bot.
 - A disconnected human's slot becomes a bot so a team never loses a body.
   Reconnection with the same session token reclaims that slot within 20 seconds.
@@ -63,30 +68,31 @@ percentage, overtime, and the result.
   trigger starts a reload when reserve remains. Fireball Tome remains a moving
   server projectile and applies splash damage only when that projectile hits.
 - War has no field weapon pickups. Class changes apply at the next spawn.
-- Death starts an 8-second respawn timer and then returns the combatant to its
-  team grid. The point, damage, deaths, respawns, and bot decisions are all
-  server authoritative.
+- Death starts a 5-second respawn timer and then returns the combatant to its
+  team grid. Scoring, damage, deaths, assists, respawns, and bot decisions are
+  all server authoritative.
 
 ## Performance boundaries
 
-The server represents 80 combatants as plain state records and advances bots at
-a deterministic fixed 10 Hz. It does not construct 80 client `BotController`
+The server represents 40 combatants as plain state records and advances bots at
+a deterministic fixed 10 Hz. It does not construct 40 client `BotController`
 objects. One room snapshot is encoded once and shared with connected clients at
 10 Hz. Frames above 1 KiB negotiate low-latency WebSocket compression, while
 snapshots and visual attack events may be dropped for a backpressured socket.
-The 80-client stress gate requires every client to receive the expected
+The 40-client stress gate requires every client to receive the expected
 snapshots while averaging no more than 80 KB/s of measured wire traffic. The
-production process admits one War room so a connection burst cannot allocate
-multiple 80-bot simulations on the 256 MiB machine.
+production process admits one room per War mode, for at most two simultaneous
+War rooms, so a connection burst cannot allocate unbounded 40-bot simulations
+on the 256 MiB machine.
 
-The browser keeps all 80 network records and owns a pool of 79 lightweight
+The browser keeps all 40 network records and owns a pool of 39 lightweight
 fighter cutouts for every remote combatant; the local player remains the
 first-person viewmodel. A 190-unit safety cull still rejects actors beyond the
 entire playable field, while full attack/hit animation is limited to 72 units
 and health blocks to 58 units. A health block is suppressed inside 4 units or
 behind the camera so a near-plane projection cannot create a giant clipped bar;
 the fighter itself remains visible. Far actors retain idle, walk, and death state,
-so the central battle can visibly contain all 80 combatants without running 80
+so the central battle can visibly contain all 40 combatants without running 40
 heavyweight controllers. Health textures are rewritten only when their ratio
 changes.
 
@@ -94,7 +100,8 @@ changes.
 
 The War field is 240 by 200 world units with mirrored team spawn grids, open
 routes, simple box cover, hard boundary collision, and one unobstructed central
-point. It deliberately contains no pickup locations.
+point used by Control. Team Deathmatch ignores the point. Neither mode contains
+pickup locations.
 
 Trees and bushes are never camera-facing sprites. Each placement is a fixed
 group of exactly two identical transparent photo planes intersecting at 90

@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { launchChromium, pathFromUrl } from './browser.mjs';
+import { WAR_COMBATANT_COUNT, WAR_TEAM_SIZE } from '../shared/warConfig.js';
 
 const baseUrl = process.env.LARP_URL || 'http://127.0.0.1:8080';
 const output = new URL('../artifacts/war-performance/', import.meta.url);
@@ -10,6 +11,8 @@ const viewports = Object.freeze({
   narrow: { width: 720, height: 900 },
 });
 const angleBackend = (process.env.LARP_WAR_ANGLE_BACKEND || '').trim();
+const remoteCombatantCount = WAR_COMBATANT_COUNT - 1;
+const nearHealthBarMinimum = Math.floor(remoteCombatantCount * 0.85);
 
 function summarize(samples) {
   const sorted = [...samples].sort((first, second) => first - second);
@@ -100,12 +103,13 @@ try {
   await page.locator('#game-mode').selectOption('war');
   await page.locator('#war-class').selectOption('lightning');
   await page.locator('#online-button').click();
-  await page.waitForFunction(() => {
+  await page.waitForFunction((combatantCount) => {
     const game = window.__LARP_GAME__;
-    return game?.matchType === 'war' && game.warSnapshot?.combatants?.length === 80;
-  }, { timeout: 20_000 });
+    return game?.matchType === 'war' &&
+      game.warSnapshot?.combatants?.length === combatantCount;
+  }, WAR_COMBATANT_COUNT, { timeout: 20_000 });
 
-  const harness = await page.evaluate(() => {
+  const harness = await page.evaluate(({ combatantCount, teamSize }) => {
     const game = window.__LARP_GAME__;
     const crowd = game.warCrowd;
     const classIds = ['shortbow', 'crossbow', 'greatsword', 'lightning'];
@@ -167,14 +171,14 @@ try {
       return result;
     };
 
-    const makeStates = (tick, scenario = 'near') => Array.from({ length: 80 }, (_, id) => {
+    const makeStates = (tick, scenario = 'near') => Array.from({ length: combatantCount }, (_, id) => {
       const classId = classIds[id % classIds.length];
       const local = id === game.warSlot;
       const angle = id * 2.399963229728653;
       let radius = 5 + (id % 10) * 1.8;
       let x = Math.cos(angle) * radius;
       let z = Math.sin(angle) * radius;
-      if (scenario === 'far' && id >= 40) {
+      if (scenario === 'far' && id >= teamSize) {
         radius = 96 + (id % 8) * 3;
         x = Math.cos(angle) * radius;
         z = Math.sin(angle) * radius;
@@ -195,11 +199,11 @@ try {
           : maxHealth[classId];
       return {
         id,
-        team: id < 40 ? 0 : 1,
+        team: id < teamSize ? 0 : 1,
         slot: id,
-        teamSlot: id % 40,
+        teamSlot: id % teamSize,
         human: local,
-        name: local ? 'You' : `Bot ${id % 40 + 1}`,
+        name: local ? 'You' : `Bot ${id % teamSize + 1}`,
         classId,
         weapon: classId,
         position: [x, 0.02, z],
@@ -225,7 +229,7 @@ try {
         contested: tick % 4 === 0,
         progress: (tick * 13) % 100,
         scores: [(tick * 3) % 100, (tick * 5) % 100],
-        occupancy: [20, 20],
+        occupancy: [teamSize, teamSize],
       };
       game.warSnapshot = {
         serverTime: Date.now(),
@@ -313,6 +317,9 @@ try {
       slots: crowd.slots.length,
       localId: crowd.localId,
     };
+  }, {
+    combatantCount: WAR_COMBATANT_COUNT,
+    teamSize: WAR_TEAM_SIZE,
   });
 
   const lodAndPool = await page.evaluate(() => {
@@ -576,16 +583,20 @@ try {
   await writeFile(new URL('report.json', output), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
 
-  if (harness.combatants !== 80 || harness.capacity !== 79 || harness.slots !== 79) {
+  if (
+    harness.combatants !== WAR_COMBATANT_COUNT ||
+    harness.capacity !== remoteCombatantCount ||
+    harness.slots !== remoteCombatantCount
+  ) {
     throw new Error(`War did not expose one pooled remote slot per combatant: ${JSON.stringify(harness)}`);
   }
   if (
-    lodAndPool.near.visible !== 79 ||
-    lodAndPool.near.healthBars < 70 ||
-    lodAndPool.far.visible !== 79 ||
+    lodAndPool.near.visible !== remoteCombatantCount ||
+    lodAndPool.near.healthBars < nearHealthBarMinimum ||
+    lodAndPool.far.visible !== remoteCombatantCount ||
     lodAndPool.far.healthBars >= lodAndPool.near.healthBars ||
     lodAndPool.far.farAttackOrHit !== 0 ||
-    lodAndPool.culled.visible >= 79 ||
+    lodAndPool.culled.visible >= remoteCombatantCount ||
     lodAndPool.healthBarSafety.behindVisible ||
     lodAndPool.healthBarSafety.nearVisible ||
     !lodAndPool.healthBarSafety.fightersVisible ||
@@ -596,15 +607,15 @@ try {
   }
   if (
     stableHealthAndCpu.stableVersionChanges !== 0 ||
-    stableHealthAndCpu.changedVersionCount !== 79 ||
+    stableHealthAndCpu.changedVersionCount !== remoteCombatantCount ||
     stableHealthAndCpu.meanUpdate > 2
   ) {
     throw new Error(`War crowd CPU/health uploads regressed: ${JSON.stringify(stableHealthAndCpu)}`);
   }
   if (
-    resourceAndDraw.crowd.uniqueSpriteMaterials !== 79 ||
-    resourceAndDraw.crowd.uniqueHealthMaterials !== 79 ||
-    resourceAndDraw.crowd.uniqueHealthTextures !== 79 ||
+    resourceAndDraw.crowd.uniqueSpriteMaterials !== remoteCombatantCount ||
+    resourceAndDraw.crowd.uniqueHealthMaterials !== remoteCombatantCount ||
+    resourceAndDraw.crowd.uniqueHealthTextures !== remoteCombatantCount ||
     resourceAndDraw.crowd.uniqueFighterTextures > 20 ||
     resourceAndDraw.scene.materials > 260 ||
     resourceAndDraw.scene.textures > 180 ||

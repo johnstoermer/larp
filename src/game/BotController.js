@@ -1,7 +1,11 @@
 import * as THREE from 'three';
 import { CHARACTER_HITBOX } from '../../shared/characterHitbox.js';
 import { clamp, damp, moveToward } from './math.js';
-import { createHealthBarTexture, updateHealthBarTexture } from './healthBar.js';
+import {
+  HEALTH_BAR_COLORS,
+  createHealthBarTexture,
+  updateHealthBarTexture,
+} from './healthBar.js';
 import { loadPhotoTexture } from './photoTexture.js';
 import { WEAPONS } from './weapons.js';
 
@@ -157,7 +161,7 @@ export class BotController {
   }
 
   createHealthBar() {
-    this.healthBarTexture = createHealthBarTexture(1);
+    this.healthBarTexture = createHealthBarTexture(1, HEALTH_BAR_COLORS.enemy);
     const material = new THREE.SpriteMaterial({
       map: this.healthBarTexture,
       depthTest: true,
@@ -170,6 +174,7 @@ export class BotController {
     this.healthBar.position.set(0, 2.76, 0);
     this.healthBar.scale.set(1.36, 0.16, 1);
     this.healthBar.renderOrder = 7;
+    this.healthBar.userData.relationship = 'enemy';
     this.root.add(this.healthBar);
     this.updateHealthBar();
   }

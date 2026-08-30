@@ -1,5 +1,6 @@
 const DEFAULT_CELL_SIZE = 3;
 const DEFAULT_BODY_RADIUS = 0.62;
+const DEFAULT_OBSTACLE_CLEARANCE = 0.8;
 const FLOOR_Y = 0.02;
 
 const distanceSquared2d = (first, second) => {
@@ -104,6 +105,7 @@ export class WarBotNavigator {
   constructor(map, {
     cellSize = DEFAULT_CELL_SIZE,
     bodyRadius = DEFAULT_BODY_RADIUS,
+    obstacleClearance = DEFAULT_OBSTACLE_CLEARANCE,
   } = {}) {
     this.map = map;
     this.cellSize = cellSize;
@@ -115,7 +117,11 @@ export class WarBotNavigator {
     this.columns = Math.floor((this.maximumX - this.minimumX) / cellSize) + 1;
     this.rows = Math.floor((this.maximumZ - this.minimumZ) / cellSize) + 1;
     this.obstacles = map.colliders
-      .map((collider) => horizontalObstacle(collider, bodyRadius))
+      // Give A* one extra step of breathing room beyond the physical body.
+      // Fixed photo planes are intentionally thin, so a waypoint placed at
+      // exact body clearance can otherwise produce a long axis-slide scrape
+      // while the bot rounds the visible edge of a wide cutout.
+      .map((collider) => horizontalObstacle(collider, obstacleClearance))
       .filter(Boolean);
     this.walkable = new Uint8Array(this.columns * this.rows);
     // A zero entry is unknown, one is traversable, and two is blocked. Thin

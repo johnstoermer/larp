@@ -4,12 +4,17 @@ export const HEALTH_BAR_STYLE = Object.freeze({
   width: 96,
   height: 12,
   inset: 3,
-  fill: 0x000080,
+  fill: 0xff0000,
   face: 0xc0c0c0,
   darkShadow: 0x0a0a0a,
   shadow: 0x808080,
   highlight: 0xdfdfdf,
   light: 0xffffff,
+});
+
+export const HEALTH_BAR_COLORS = Object.freeze({
+  ally: 0x008000,
+  enemy: 0xff0000,
 });
 
 function normalizeRatio(value) {
@@ -34,9 +39,17 @@ function fillRect(data, width, left, top, right, bottom, color) {
   }
 }
 
-export function renderHealthBarPixels(data, value) {
+function normalizeFillColor(value) {
+  const color = Number(value);
+  return Number.isInteger(color) && color >= 0 && color <= 0xffffff
+    ? color
+    : HEALTH_BAR_STYLE.fill;
+}
+
+export function renderHealthBarPixels(data, value, fill = HEALTH_BAR_STYLE.fill) {
   const { width, height, inset } = HEALTH_BAR_STYLE;
   const ratio = normalizeRatio(value);
+  const fillColor = normalizeFillColor(fill);
   const fillCapacity = width - inset * 2;
   const fillPixels = Math.round(fillCapacity * ratio);
 
@@ -61,12 +74,13 @@ export function renderHealthBarPixels(data, value) {
       inset,
       inset + fillPixels,
       height - inset,
-      HEALTH_BAR_STYLE.fill,
+      fillColor,
     );
   }
 
   return Object.freeze({
     ratio,
+    fill: fillColor,
     fillPixels,
     fillCapacity,
     fillBounds: Object.freeze({
@@ -78,10 +92,10 @@ export function renderHealthBarPixels(data, value) {
   });
 }
 
-export function createHealthBarTexture(value = 1) {
+export function createHealthBarTexture(value = 1, fill = HEALTH_BAR_STYLE.fill) {
   const { width, height } = HEALTH_BAR_STYLE;
   const data = new Uint8Array(width * height * 4);
-  const metrics = renderHealthBarPixels(data, value);
+  const metrics = renderHealthBarPixels(data, value, fill);
   const texture = new THREE.DataTexture(
     data,
     width,
@@ -99,11 +113,21 @@ export function createHealthBarTexture(value = 1) {
   return texture;
 }
 
-export function updateHealthBarTexture(texture, value) {
+export function updateHealthBarTexture(
+  texture,
+  value,
+  fill = texture?.userData?.fill ?? HEALTH_BAR_STYLE.fill,
+) {
   if (!texture?.image?.data) return null;
   const ratio = normalizeRatio(value);
-  if (texture.userData.ratio === ratio) return texture.userData;
-  const metrics = renderHealthBarPixels(texture.image.data, ratio);
+  const fillColor = normalizeFillColor(fill);
+  if (
+    texture.userData.ratio === ratio &&
+    texture.userData.fill === fillColor
+  ) {
+    return texture.userData;
+  }
+  const metrics = renderHealthBarPixels(texture.image.data, ratio, fillColor);
   texture.userData = { ...metrics };
   texture.needsUpdate = true;
   return texture.userData;

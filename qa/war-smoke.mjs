@@ -1,11 +1,23 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { WAR_CLASSES } from '../shared/warConfig.js';
+import {
+  WAR_CLASSES,
+  WAR_COMBATANT_COUNT,
+  WAR_MODE_TEAM_DEATHMATCH,
+  WAR_TEAM_SIZE,
+  normalizeWarMode,
+} from '../shared/warConfig.js';
 import { launchChromium } from './browser.mjs';
 
 const baseUrl = process.env.LARP_URL || 'http://127.0.0.1:8080';
 const selectedClass = process.env.LARP_WAR_CLASS || 'greatsword';
+const selectedWarMode = normalizeWarMode(process.env.LARP_WAR_MODE);
+const selectedLobbyMode = selectedWarMode === WAR_MODE_TEAM_DEATHMATCH
+  ? 'war-tdm'
+  : 'war';
 const ammoFree = new Set(['knives', 'shortbow', 'longbow', 'greatsword']).has(selectedClass);
-const artifactSuffix = selectedClass === 'greatsword' ? '' : `-${selectedClass}`;
+const modeSuffix = selectedWarMode === WAR_MODE_TEAM_DEATHMATCH ? '-tdm' : '';
+const classSuffix = selectedClass === 'greatsword' ? '' : `-${selectedClass}`;
+const artifactSuffix = `${modeSuffix}${classSuffix}`;
 const output = new URL('../artifacts/war-review/', import.meta.url);
 await mkdir(output, { recursive: true });
 
@@ -22,18 +34,19 @@ page.on('pageerror', (error) => errors.push(`page: ${error.message}`));
 
 try {
   await page.goto(baseUrl, { waitUntil: 'networkidle', timeout: 60_000 });
-  await page.locator('#game-mode').selectOption('war');
+  await page.locator('#game-mode').selectOption(selectedLobbyMode);
   await page.locator('#war-class').selectOption(selectedClass);
   await page.screenshot({
     path: new URL(`mode-selector${artifactSuffix}.png`, output).pathname,
   });
   await page.locator('#online-button').click();
   await page.waitForFunction(
-    () => {
+    (config) => {
       const game = window.__LARP_GAME__;
-      return game?.matchType === 'war' && game.warSnapshot?.combatants?.length === 80;
+      return game?.matchType === 'war' &&
+        game.warSnapshot?.combatants?.length === config.WAR_COMBATANT_COUNT;
     },
-    null,
+    { WAR_COMBATANT_COUNT },
     { timeout: 20_000 },
   );
   const initialAck = await page.evaluate(() => {
@@ -227,6 +240,7 @@ try {
     );
     return {
       matchType: game.matchType,
+      warMode: game.warMode,
       phase: game.phase,
       team: game.warTeam,
       slot: game.warSlot,
@@ -258,13 +272,25 @@ try {
         ammoHidden: document.querySelector('.health-panel').classList.contains('ammo-free'),
         modeValue: document.querySelector('#game-mode').value,
         classValue: document.querySelector('#war-class').value,
+        redScore: document.querySelector('#war-red-score').textContent,
+        blueScore: document.querySelector('#war-blue-score').textContent,
+        captureHidden: document.querySelector('#war-capture').classList.contains('hidden'),
+        objectiveVisible: Boolean(game.warArena.objectiveMarker?.visible),
         titleBackground: style('#title-screen').backgroundImage,
         windowBorderRadius: style('.match-header').borderRadius,
       },
       errors: [...(window.__LARP_ERRORS__ ?? [])],
     };
   });
-  const report = { baseUrl, selectedClass, state, heldKnifeThrows, fireballMotion, errors };
+  const report = {
+    baseUrl,
+    selectedClass,
+    selectedWarMode,
+    state,
+    heldKnifeThrows,
+    fireballMotion,
+    errors,
+  };
   await writeFile(
     new URL(`report${artifactSuffix}.json`, output),
     JSON.stringify(report, null, 2),
@@ -272,8 +298,18 @@ try {
   console.log(JSON.stringify(report, null, 2));
 
   if (state.matchType !== 'war') throw new Error('War did not start.');
-  if (state.combatants !== 80 || state.teams.some((count) => count !== 40)) {
-    throw new Error(`War teams are not 40v40: ${JSON.stringify(state.teams)}`);
+  if (
+    state.combatants !== WAR_COMBATANT_COUNT ||
+    state.teams.some((count) => count !== WAR_TEAM_SIZE)
+  ) {
+    throw new Error(`War teams are not 20v20: ${JSON.stringify(state.teams)}`);
+  }
+  if (state.warMode !== selectedWarMode || state.ui.modeValue !== selectedLobbyMode) {
+    throw new Error(`War mode selection drifted: ${JSON.stringify({
+      requested: selectedWarMode,
+      actual: state.warMode,
+      ui: state.ui.modeValue,
+    })}`);
   }
   if (state.pickups !== 0) throw new Error('War exposed field pickups.');
   if (state.localClass !== selectedClass) throw new Error('Selected War class was not applied.');
@@ -282,10 +318,15 @@ try {
   if (selectedClass === 'knives' && heldKnifeThrows < 2) {
     throw new Error(`Held War knives did not repeat: ${heldKnifeThrows}`);
   }
-  if (state.crowd.capacity !== 79 || state.crowd.visible > state.crowd.capacity) {
+  if (
+    state.crowd.capacity !== WAR_COMBATANT_COUNT - 1 ||
+    state.crowd.visible > state.crowd.capacity
+  ) {
     throw new Error(`War crowd exceeded its pool: ${JSON.stringify(state.crowd)}`);
   }
-  if (state.crowd.stateCount !== 80) throw new Error('Client did not retain all War records.');
+  if (state.crowd.stateCount !== WAR_COMBATANT_COUNT) {
+    throw new Error('Client did not retain all War records.');
+  }
   if (!state.foliage.fixed || state.foliage.count < 20) {
     throw new Error(`War foliage contract failed: ${JSON.stringify(state.foliage)}`);
   }
@@ -298,6 +339,16 @@ try {
   }
   if (state.ui.windowBorderRadius !== '0px') {
     throw new Error(`War window is not square Win98 chrome: ${state.ui.windowBorderRadius}`);
+  }
+  if (selectedWarMode === WAR_MODE_TEAM_DEATHMATCH) {
+    if (!state.ui.captureHidden || state.ui.objectiveVisible) {
+      throw new Error(`TDM exposed Control UI: ${JSON.stringify(state.ui)}`);
+    }
+    if (state.ui.redScore.endsWith('%') || state.ui.blueScore.endsWith('%')) {
+      throw new Error(`TDM scores were formatted as percentages: ${JSON.stringify(state.ui)}`);
+    }
+  } else if (!state.ui.redScore.endsWith('%') || !state.ui.blueScore.endsWith('%')) {
+    throw new Error(`Control scores lost percentage formatting: ${JSON.stringify(state.ui)}`);
   }
   if (selectedClass === 'fireball') {
     if (!fireballMotion?.before || !fireballMotion?.after) {

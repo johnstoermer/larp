@@ -2,9 +2,9 @@
 
 LARP runs one authoritative match process on Fly.io. The browser never submits
 damage, scores, ammunition totals, pickup outcomes, or control-point ownership.
-Protocol version 4 is the shared wire contract for the browser client,
+Protocol version 6 is the shared wire contract for the browser client,
 automated load clients, and server. War messages are additive, mode-scoped
-messages so an Arena client never enters the 80-player path accidentally.
+messages so an Arena client never enters the 40-player path accidentally.
 
 ## Session flow
 
@@ -18,12 +18,13 @@ messages so an Arena client never enters the 80-player path accidentally.
 6. A dropped socket freezes match time for up to 20 seconds. Reconnecting with
    the same token restores the player, room, and slot.
 
-War play instead joins an available 40-versus-40 room immediately. A human
-replaces one deterministic bot in a balanced team slot; bots continue to fill
-all other slots. A disconnect hands that slot back to its bot, so the larger
-match never pauses. The session token reclaims the same slot on reconnect.
-`WAR_MODE.md` records the exact point, capture, score, overtime, class, respawn,
-map, and performance choices.
+War play instead joins an available 20-versus-20 room for the selected mode
+immediately. Control scores by holding the central point; Team Deathmatch is
+first to 100 kills. A human replaces one deterministic bot in a balanced team
+slot, and bots continue to fill all other slots. A disconnect hands that slot
+back to its bot, so the larger match never pauses. The session token reclaims
+the same slot on reconnect. `WAR_MODE.md` records the exact scoring, class,
+respawn, map, and performance choices.
 
 ## Authority boundaries
 
@@ -41,9 +42,9 @@ The server owns:
 - movement sanity checks, arena bounds, and collision rejection.
 
 For War the server additionally owns team allocation, class validation,
-40-versus-40 bot fill, fixed-tick bot movement and aim, respawns, point
-occupancy, capture ownership, percentage, overtime, and the result. War has no
-field weapon pickups.
+20-versus-20 bot fill, fixed-tick bot movement and aim, respawns, mode scoring,
+and the result. In Control it also owns point occupancy, capture ownership,
+percentage, and overtime. War has no field weapon pickups.
 
 The client owns:
 
@@ -53,11 +54,11 @@ The client owns:
 - buffered opponent interpolation and short extrapolation;
 - correction against the server-acknowledged input sequence.
 
-War clients additionally own only local prediction and a bounded 79-cutout
+War clients additionally own only local prediction and a bounded 39-cutout
 render pool: one lightweight cutout for every possible remote slot while the
-local slot uses its first-person viewmodel. The client receives all 80 plain
+local slot uses its first-person viewmodel. The client receives all 40 plain
 records, distance-culls beyond the field, and reduces animation and health-bar
-work with distance; it never runs 80 heavyweight bot controllers.
+work with distance; it never runs 40 heavyweight bot controllers.
 
 Practice and multiplayer both import one hit profile: a `0.68`-radius body
 sphere centered `0.96` units above the feet and a `0.38`-radius head sphere
@@ -82,7 +83,8 @@ median of application round trips so an isolated main-thread stall does not
 masquerade as a persistent route problem.
 
 The single 256 MiB process admits at most 120 concurrent WebSockets and one
-80-slot War room; overflow receives a capacity response instead of allocating
-another 80-bot simulation. Fly uses matching 100/120 soft and hard connection
-limits. `/api/status` reports room, queue, connection, traffic, dropped
-realtime messages, and tick-drift metrics without exposing player identities.
+40-slot room per War mode, for at most two simultaneous War rooms. Overflow in
+a full mode receives a capacity response instead of allocating another 40-bot
+simulation. Fly uses matching 100/120 soft and hard connection limits.
+`/api/status` reports room, queue, connection, traffic, dropped realtime
+messages, and tick-drift metrics without exposing player identities.

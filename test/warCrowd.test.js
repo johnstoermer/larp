@@ -7,6 +7,8 @@ import {
   selectWarRenderStates,
   warFighterState,
 } from '../src/game/WarCrowd.js';
+import { HEALTH_BAR_COLORS } from '../src/game/healthBar.js';
+import { WAR_COMBATANT_COUNT } from '../shared/warConfig.js';
 
 function combatant(id, overrides = {}) {
   return {
@@ -16,7 +18,7 @@ function combatant(id, overrides = {}) {
     human: false,
     name: `Bot ${id}`,
     classId: 'shortbow',
-    position: [id - 40, 0.02, 0],
+    position: [id - WAR_COMBATANT_COUNT / 2, 0.02, 0],
     velocity: [0, 0, 0],
     yaw: 0,
     pitch: 0,
@@ -30,14 +32,14 @@ function combatant(id, overrides = {}) {
 }
 
 test('visibility selection culls by distance, local identity, and fixed pool cap', () => {
-  const states = Array.from({ length: 80 }, (_, id) => combatant(id));
+  const states = Array.from({ length: WAR_COMBATANT_COUNT }, (_, id) => combatant(id));
   const selected = selectWarRenderStates(states, new THREE.Vector3(0, 1, 0), {
-    localId: 40,
+    localId: WAR_COMBATANT_COUNT / 2,
     capacity: 12,
     renderDistance: 18,
   });
   assert.equal(selected.length, 12);
-  assert.ok(selected.every((state) => state.id !== 40));
+  assert.ok(selected.every((state) => state.id !== WAR_COMBATANT_COUNT / 2));
   assert.ok(selected.every((state) => Math.abs(state.position[0]) <= 18));
   for (let index = 1; index < selected.length; index += 1) {
     assert.ok(
@@ -54,19 +56,19 @@ test('fighter animation state covers walk, attack, hit, death, and idle', () => 
   assert.equal(warFighterState(combatant(1, { dead: true }), { hitUntil: 101 }, 100), 'death');
 });
 
-test('WarCrowd represents 80 states with a bounded lightweight render pool', () => {
+test('WarCrowd represents every War state with a bounded lightweight render pool', () => {
   const scene = new THREE.Scene();
   const crowd = new WarCrowd(scene);
-  const states = Array.from({ length: 80 }, (_, id) => combatant(id, {
+  const states = Array.from({ length: WAR_COMBATANT_COUNT }, (_, id) => combatant(id, {
     position: [(id % 10) - 5, 0.02, Math.floor(id / 10) - 4],
   }));
   crowd.localId = 0;
   crowd.applySnapshot(states, 1_000);
   const visible = crowd.update({ position: new THREE.Vector3(0, 1.6, 0) }, 1 / 60, 1_016);
 
-  assert.equal(crowd.states.size, 80);
+  assert.equal(crowd.states.size, WAR_COMBATANT_COUNT);
   assert.equal(crowd.slots.length, WAR_RENDER_POOL_SIZE);
-  assert.equal(visible, 79);
+  assert.equal(visible, WAR_COMBATANT_COUNT - 1);
   assert.equal(crowd.slotById.size, WAR_RENDER_POOL_SIZE);
   assert.ok(crowd.slots.every((slot) => slot.root.children.length === 2));
   assert.ok(crowd.slots.every((slot) => slot.sprite.isSprite));
@@ -112,8 +114,26 @@ test('health bars cull behind and too near the camera without hiding fighters', 
   assert.ok(crowd.slots.every((slot) => slot.sprite.visible));
 });
 
-test('1,000 client LOD passes for 80 actors stay within a conservative CPU budget', () => {
-  const states = Array.from({ length: 80 }, (_, id) => combatant(id, {
+test('health bars are green for allies and red for enemies of the local team', () => {
+  const scene = new THREE.Scene();
+  const crowd = new WarCrowd(scene, { capacity: 2 });
+  crowd.localTeam = 1;
+  crowd.applySnapshot([
+    combatant(1, { team: 1, position: [-1, 0.02, -8] }),
+    combatant(2, { team: 0, position: [1, 0.02, -8] }),
+  ], 100);
+  crowd.update({ position: new THREE.Vector3(0, 1.6, 0) }, 1 / 60, 101);
+
+  const ally = crowd.slotById.get(1);
+  const enemy = crowd.slotById.get(2);
+  assert.equal(ally.healthBar.userData.relationship, 'ally');
+  assert.equal(ally.healthTexture.userData.fill, HEALTH_BAR_COLORS.ally);
+  assert.equal(enemy.healthBar.userData.relationship, 'enemy');
+  assert.equal(enemy.healthTexture.userData.fill, HEALTH_BAR_COLORS.enemy);
+});
+
+test('1,000 client LOD passes for a full War roster stay within a conservative CPU budget', () => {
+  const states = Array.from({ length: WAR_COMBATANT_COUNT }, (_, id) => combatant(id, {
     position: [(id % 10) * 2 - 9, 0.02, Math.floor(id / 10) * 2 - 7],
   }));
   const camera = new THREE.Vector3(0, 1.6, 0);

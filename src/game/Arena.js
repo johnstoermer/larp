@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import {
-  BATTLE_VILLAGE_PROP_COLLIDERS,
+  BATTLE_VILLAGE_PROP_PLANES,
   MAPS as NETWORK_MAPS,
 } from '../../server/multiplayer/config.js';
+import { rotatedFootprintExtents } from '../../shared/warSceneryGeometry.js';
 import { clamp, seededRandom } from './math.js';
 import { loadPhotoTexture } from './photoTexture.js';
 
@@ -45,107 +46,76 @@ function boxFromBounds(bounds) {
 export const PHOTO_PROP_MINIMUM_GAP = 0.75;
 export const TITLE_ATTRACT_PROP_EXCLUSION_BOUNDS = Object.freeze([9, -5.6, 17.4, 0.45]);
 
+function photoPropLayout(name, presentation) {
+  return Object.freeze({
+    ...presentation,
+    ...BATTLE_VILLAGE_PROP_PLANES[name],
+    name,
+  });
+}
+
 // Visible cover remains exactly where the gameplay map originally placed it.
-// Each photograph now has an unrelated, fixed world position and a separate
-// invisible physical footprint. A camera may never translate these records.
+// Each photograph has a separate fixed world plane and a matching yaw-aware
+// thin-wall collider. A camera may never translate or rotate these records.
 export const PHOTO_PROP_LAYOUTS = Object.freeze([
-  {
+  photoPropLayout('central-wooden-cart', {
     file: 'wooden-cart',
-    name: 'central-wooden-cart',
     coverName: 'central-cart-cover',
     material: 'timber',
     coverBounds: [-2, 0, -1.2, 2, 1.9, 1.2],
-    position: [-17, 0, 3],
-    collisionBounds: BATTLE_VILLAGE_PROP_COLLIDERS['central-wooden-cart'],
-    width: 5.3,
-    height: 3.55,
     visibleBottomRatio: 105 / 512,
-  },
-  {
+  }),
+  photoPropLayout('west-hay-bales', {
     file: 'hay-bales',
-    name: 'west-hay-bales',
     coverName: 'west-hay-cover',
     material: 'hay',
     coverBounds: [-7.1, 0, -3.7, -4.1, 1.45, -1.5],
-    position: [-11.5, 0, 12.5],
-    collisionBounds: BATTLE_VILLAGE_PROP_COLLIDERS['west-hay-bales'],
-    width: 5.5,
-    height: 2.2,
     visibleBottomRatio: 68 / 512,
-  },
-  {
+  }),
+  photoPropLayout('east-hay-bales', {
     file: 'hay-bales',
-    name: 'east-hay-bales',
     coverName: 'east-hay-cover',
     material: 'hay',
     coverBounds: [4.1, 0, 1.5, 7.1, 1.45, 3.7],
-    position: [11.5, 0, -12.5],
-    collisionBounds: BATTLE_VILLAGE_PROP_COLLIDERS['east-hay-bales'],
-    width: 5.5,
-    height: 2.2,
     visibleBottomRatio: 68 / 512,
-  },
-  {
+  }),
+  photoPropLayout('red-flank-tent', {
     file: 'canvas-tent',
-    name: 'red-flank-tent',
     coverName: 'red-flank-tent-cover',
     material: 'canvas',
     coverBounds: [-18.3, 0, -11.1, -15.1, 2.35, -7.5],
-    position: [-11, 0, -13],
-    collisionBounds: BATTLE_VILLAGE_PROP_COLLIDERS['red-flank-tent'],
-    width: 4.8,
-    height: 3.2,
     visibleBottomRatio: 11 / 427,
-  },
-  {
+  }),
+  photoPropLayout('blue-flank-tent', {
     file: 'canvas-tent',
-    name: 'blue-flank-tent',
     coverName: 'blue-flank-tent-cover',
     material: 'canvas',
     coverBounds: [15.1, 0, 7.5, 18.3, 2.35, 11.1],
-    position: [11, 0, 13],
-    collisionBounds: BATTLE_VILLAGE_PROP_COLLIDERS['blue-flank-tent'],
-    width: 4.8,
-    height: 3.2,
     visibleBottomRatio: 11 / 427,
-  },
-  {
+  }),
+  photoPropLayout('west-archery-target', {
     file: 'archery-target',
-    name: 'west-archery-target',
     coverName: 'west-archery-cover',
     material: 'timber',
     coverBounds: [-15.7, 0, 7.1, -14.1, 2.15, 8.1],
-    position: [-18, 0, 13.5],
-    collisionBounds: BATTLE_VILLAGE_PROP_COLLIDERS['west-archery-target'],
-    width: 2.4,
-    height: 2.85,
     visibleBottomRatio: 15 / 640,
-  },
-  {
+  }),
+  photoPropLayout('east-archery-target', {
     file: 'archery-target',
-    name: 'east-archery-target',
     coverName: 'east-archery-cover',
     material: 'timber',
     coverBounds: [14.1, 0, -8.1, 15.7, 2.15, -7.1],
-    position: [18, 0, -14],
-    collisionBounds: BATTLE_VILLAGE_PROP_COLLIDERS['east-archery-target'],
-    width: 2.4,
-    height: 2.85,
     visibleBottomRatio: 15 / 640,
-  },
+  }),
 ]);
 
-// A Sprite turns only its presentation plane toward the camera. Its world
-// position remains fixed, so the swept horizontal footprint is a circle. This
-// conservative square contains that circle for geometry audits.
 export function photoPropFootprintBounds(layout) {
-  const halfX = layout.width / 2;
-  const halfZ = halfX;
+  const [extentX, extentZ] = rotatedFootprintExtents(layout.width, 0, layout.yaw);
   return [
-    layout.position[0] - halfX,
-    layout.position[2] - halfZ,
-    layout.position[0] + halfX,
-    layout.position[2] + halfZ,
+    layout.position[0] - extentX / 2,
+    layout.position[2] - extentZ / 2,
+    layout.position[0] + extentX / 2,
+    layout.position[2] + extentZ / 2,
   ];
 }
 
@@ -172,15 +142,14 @@ export function pointToHorizontalBoundsGap(x, z, bounds) {
 }
 
 export function photoPropClearanceFromBounds(layout, bounds) {
-  return pointToHorizontalBoundsGap(layout.position[0], layout.position[2], bounds)
-    - layout.width / 2;
+  return horizontalBoundsGap(photoPropFootprintBounds(layout), bounds);
 }
 
 export function photoPropPairClearance(first, second) {
-  return Math.hypot(
-    first.position[0] - second.position[0],
-    first.position[2] - second.position[2],
-  ) - first.width / 2 - second.width / 2;
+  return horizontalBoundsGap(
+    photoPropFootprintBounds(first),
+    photoPropFootprintBounds(second),
+  );
 }
 
 export class Arena {
@@ -240,6 +209,8 @@ export class Arena {
       timber: photo('timber'),
       red: photo('red-plaster'),
       blue: photo('blue-plaster'),
+      // War still has authored roof/debris pieces; Battle Village simply does
+      // not instantiate its former paired roof slopes.
       roof: photo('roof-shingles'),
       hedge: photo('hedge'),
       paleTimber: photo('timber', 0xd8c8aa),
@@ -380,8 +351,8 @@ export class Arena {
     return this.addBox({ position, size, material, name });
   }
 
-  addPropSprite(file, position, width, height, name, options = {}) {
-    const material = new THREE.SpriteMaterial({
+  addPropPlane(file, position, width, height, name, options = {}) {
+    const material = new THREE.MeshBasicMaterial({
       map: loadPhotoTexture(`/assets/larp/props/${file}.webp`),
       transparent: true,
       alphaTest: 0.035,
@@ -389,18 +360,35 @@ export class Arena {
       depthTest: true,
       fog: true,
       toneMapped: true,
+      side: THREE.DoubleSide,
     });
     material.userData.temporary = true;
-    const sprite = new THREE.Sprite(material);
+    const geometry = new THREE.PlaneGeometry(width, height);
+    geometry.userData.temporary = true;
+    const cutout = new THREE.Mesh(geometry, material);
     const visibleBottomRatio = options.visibleBottomRatio ?? 0;
-    sprite.name = `individual-photo-prop-${name}`;
-    sprite.position.set(position[0], position[1] + 0.02, position[2]);
-    sprite.center.set(0.5, visibleBottomRatio);
-    sprite.scale.set(width, height, 1);
-    this.root.add(sprite);
+    const yaw = options.yaw ?? 0;
+    cutout.name = `individual-photo-prop-${name}`;
+    cutout.position.set(
+      position[0],
+      position[1] + 0.02 + height / 2 - visibleBottomRatio * height,
+      position[2],
+    );
+    cutout.rotation.y = yaw;
+    cutout.castShadow = true;
+    cutout.receiveShadow = false;
+    cutout.userData.fixedPhotoProp = true;
+    cutout.userData.fixedYaw = yaw;
+    this.root.add(cutout);
     const record = {
-      sprite,
+      cutout,
+      // Kept as a compatibility alias for the small amount of existing QA
+      // and scene-inspection code that calls all photo actors "sprites".
+      sprite: cutout,
       position: [...position],
+      width,
+      height,
+      yaw,
       collisionBounds: options.collisionBounds,
       coverBounds: options.coverBounds,
       footprintBounds: options.footprintBounds,
@@ -408,7 +396,7 @@ export class Arena {
       collisionProxy: null,
     };
     this.photoProps.push(record);
-    return sprite;
+    return cutout;
   }
 
   addInvisiblePropCollision(bounds, name) {
@@ -474,22 +462,6 @@ export class Arena {
         name: `${team}-facade-beam`,
       });
     }
-    this.addBox({
-      position: [0, 5.56, zCenter],
-      size: [6.7, 0.24, 8.15],
-      material: 'roof',
-      rotation: [0, 0, 0.31],
-      raycast: false,
-      name: `${team}-roof-west-slope`,
-    });
-    this.addBox({
-      position: [0, 5.56, zCenter],
-      size: [6.7, 0.24, 8.15],
-      material: 'roof',
-      rotation: [0, 0, -0.31],
-      raycast: false,
-      name: `${team}-roof-east-slope`,
-    });
   }
 
   buildBattleVillage() {
@@ -521,7 +493,7 @@ export class Arena {
 
     for (const prop of PHOTO_PROP_LAYOUTS) {
       this.addBoundsVisual(prop.coverBounds, prop.material, prop.coverName);
-      this.addPropSprite(
+      this.addPropPlane(
         prop.file,
         prop.position,
         prop.width,
@@ -529,6 +501,7 @@ export class Arena {
         prop.name,
         {
           visibleBottomRatio: prop.visibleBottomRatio,
+          yaw: prop.yaw,
           collisionBounds: prop.collisionBounds,
           coverBounds: prop.coverBounds,
           footprintBounds: photoPropFootprintBounds(prop),

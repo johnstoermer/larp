@@ -3,7 +3,10 @@
 // consume the same footprints. The layout borrows only the broad design ideas
 // of layered lanes, recognizable landmarks, broken sightlines, and flank loops.
 
-import { rotatedFootprintBounds } from './warSceneryGeometry.js';
+import {
+  fixedPhotoPropCollisionBounds,
+  quantizeFixedPhotoPropYaw,
+} from './warSceneryGeometry.js';
 
 const freezePoint = (point) => Object.freeze([...point]);
 const freezeBounds = (bounds) => Object.freeze([...bounds]);
@@ -53,9 +56,9 @@ function photoProp({
   yaw = 0,
   width,
   height,
-  depth,
   visibleBottomRatio = 0,
 }) {
+  const fixedYaw = quantizeFixedPhotoPropYaw(yaw);
   return Object.freeze({
     id,
     landmark,
@@ -63,20 +66,18 @@ function photoProp({
     type: file,
     asset: `/assets/larp/props/${file}.webp`,
     position: freezePoint(position),
-    yaw,
+    yaw: fixedYaw,
     width,
     height,
-    depth,
     visibleBottomRatio,
     presentation: 'fixed-plane',
     fixedPlane: true,
     solid: true,
-    collisionBounds: freezeBounds(rotatedFootprintBounds(
+    collisionBounds: freezeBounds(fixedPhotoPropCollisionBounds(
       position,
       width,
-      depth,
       height * 0.72,
-      yaw,
+      fixedYaw,
     )),
   });
 }
@@ -249,18 +250,18 @@ export const WAR_EAST_SOUTH_SOLIDS = Object.freeze([
 ]);
 
 export const WAR_EAST_SOUTH_PHOTO_PROPS = Object.freeze([
-  photoProp({ id: 'north-supply-cart', landmark: 'east-watch-hall', file: 'wooden-cart', position: [58, 0, -78], yaw: 0.28, width: 5.4, height: 3.55, depth: 2.4, visibleBottomRatio: 105 / 512 }),
-  photoProp({ id: 'watch-hay-stack', landmark: 'east-watch-hall', file: 'hay-bales', position: [42, 0, -27], yaw: -0.22, width: 5.5, height: 2.2, depth: 2.2, visibleBottomRatio: 68 / 512 }),
-  photoProp({ id: 'watch-field-tent', landmark: 'east-watch-hall', file: 'canvas-tent', position: [91, 0, -43], yaw: -0.42, width: 4.8, height: 3.2, depth: 3.2, visibleBottomRatio: 11 / 427 }),
-  photoProp({ id: 'north-practice-target', landmark: 'east-market-ruins', file: 'archery-target', position: [76, 0, -20], yaw: Math.PI * 0.48, width: 2.4, height: 2.85, depth: 0.65, visibleBottomRatio: 15 / 640 }),
-  photoProp({ id: 'market-broken-cart', landmark: 'east-market-ruins', file: 'wooden-cart', position: [106, 0, -22], yaw: -0.6, width: 5.4, height: 3.55, depth: 2.4, visibleBottomRatio: 105 / 512 }),
-  photoProp({ id: 'south-road-hay', landmark: 'sunken-road', file: 'hay-bales', position: [44, 0, 29], yaw: 0.16, width: 5.5, height: 2.2, depth: 2.2, visibleBottomRatio: 68 / 512 }),
-  photoProp({ id: 'guild-refuge-tent', landmark: 'south-guildhall', file: 'canvas-tent', position: [91, 0, 30], yaw: 0.37, width: 4.8, height: 3.2, depth: 3.2, visibleBottomRatio: 11 / 427 }),
-  photoProp({ id: 'guild-supply-cart', landmark: 'south-guildhall', file: 'wooden-cart', position: [84, 0, 52], yaw: -0.36, width: 5.4, height: 3.55, depth: 2.4, visibleBottomRatio: 105 / 512 }),
-  photoProp({ id: 'camp-front-tent', landmark: 'south-muster-camp', file: 'canvas-tent', position: [96, 0, 57], yaw: Math.PI, width: 4.8, height: 3.2, depth: 3.2, visibleBottomRatio: 11 / 427 }),
-  photoProp({ id: 'camp-west-tent', landmark: 'south-muster-camp', file: 'canvas-tent', position: [75, 0, 78], yaw: Math.PI * 0.54, width: 4.8, height: 3.2, depth: 3.2, visibleBottomRatio: 11 / 427 }),
-  photoProp({ id: 'camp-east-hay', landmark: 'south-muster-camp', file: 'hay-bales', position: [106, 0, 73], yaw: -0.24, width: 5.5, height: 2.2, depth: 2.2, visibleBottomRatio: 68 / 512 }),
-  photoProp({ id: 'camp-practice-target', landmark: 'south-muster-camp', file: 'archery-target', position: [84, 0, 94], yaw: Math.PI, width: 2.4, height: 2.85, depth: 0.65, visibleBottomRatio: 15 / 640 }),
+  photoProp({ id: 'north-supply-cart', landmark: 'east-watch-hall', file: 'wooden-cart', position: [58, 0, -78], yaw: 0.28, width: 5.4, height: 3.55, visibleBottomRatio: 105 / 512 }),
+  photoProp({ id: 'watch-hay-stack', landmark: 'east-watch-hall', file: 'hay-bales', position: [42, 0, -27], yaw: -0.22, width: 5.5, height: 2.2, visibleBottomRatio: 68 / 512 }),
+  photoProp({ id: 'watch-field-tent', landmark: 'east-watch-hall', file: 'canvas-tent', position: [91, 0, -43], yaw: -0.42, width: 4.8, height: 3.2, visibleBottomRatio: 11 / 427 }),
+  photoProp({ id: 'north-practice-target', landmark: 'east-market-ruins', file: 'archery-target', position: [76, 0, -20], yaw: Math.PI * 0.48, width: 2.4, height: 2.85, visibleBottomRatio: 15 / 640 }),
+  photoProp({ id: 'market-broken-cart', landmark: 'east-market-ruins', file: 'wooden-cart', position: [106, 0, -22], yaw: -0.6, width: 5.4, height: 3.55, visibleBottomRatio: 105 / 512 }),
+  photoProp({ id: 'south-road-hay', landmark: 'sunken-road', file: 'hay-bales', position: [44, 0, 29], yaw: 0.16, width: 5.5, height: 2.2, visibleBottomRatio: 68 / 512 }),
+  photoProp({ id: 'guild-refuge-tent', landmark: 'south-guildhall', file: 'canvas-tent', position: [91, 0, 30], yaw: 0.37, width: 4.8, height: 3.2, visibleBottomRatio: 11 / 427 }),
+  photoProp({ id: 'guild-supply-cart', landmark: 'south-guildhall', file: 'wooden-cart', position: [84, 0, 52], yaw: -0.36, width: 5.4, height: 3.55, visibleBottomRatio: 105 / 512 }),
+  photoProp({ id: 'camp-front-tent', landmark: 'south-muster-camp', file: 'canvas-tent', position: [96, 0, 57], yaw: Math.PI, width: 4.8, height: 3.2, visibleBottomRatio: 11 / 427 }),
+  photoProp({ id: 'camp-west-tent', landmark: 'south-muster-camp', file: 'canvas-tent', position: [75, 0, 78], yaw: Math.PI * 0.54, width: 4.8, height: 3.2, visibleBottomRatio: 11 / 427 }),
+  photoProp({ id: 'camp-east-hay', landmark: 'south-muster-camp', file: 'hay-bales', position: [106, 0, 73], yaw: -0.24, width: 5.5, height: 2.2, visibleBottomRatio: 68 / 512 }),
+  photoProp({ id: 'camp-practice-target', landmark: 'south-muster-camp', file: 'archery-target', position: [84, 0, 94], yaw: Math.PI, width: 2.4, height: 2.85, visibleBottomRatio: 15 / 640 }),
 ]);
 
 const FOLIAGE_PLACEMENTS = [

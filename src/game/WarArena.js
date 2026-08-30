@@ -547,8 +547,12 @@ export class WarArena extends Arena {
     }
   }
 
-  setControlState(state = {}) {
+  setControlState(state = null) {
     if (!this.objectiveMarker || !this.objectiveFill) return;
+    const visible = Boolean(state);
+    this.objectiveMarker.visible = visible;
+    this.objectiveFill.visible = visible;
+    if (!visible) return;
     const color = state.contested
       ? WAR_COLORS.contested
       : state.owner === 0

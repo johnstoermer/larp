@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { shouldShowWarRespawnClass } from '../src/game/Interface.js';
+import {
+  respawnCountdownText,
+  shouldShowWarRespawnClass,
+} from '../src/game/Interface.js';
 
 const stylesPath = new URL('../src/styles.css', import.meta.url);
 const htmlPath = new URL('../index.html', import.meta.url);
@@ -110,7 +113,7 @@ test('98.css remains the sole chrome source for standard UI primitives', () => {
 
   assertLibraryOwnsChrome(
     'Windows',
-    /(?:^|[ >])(?:\.window|\.title-copy|\.title-controls|\.lobby-shell|\.match-header|\.player-status|#announcement|\.pause-box|\.result-copy|\.connection-window|\.desktop-warning-window|\.error-window)(?:\.[\w-]+)*(?:::[\w-]+)?$/,
+    /(?:^|[ >])(?:\.window|\.title-copy|\.title-controls|\.lobby-shell|\.match-header|\.player-status|#announcement|\.pause-box|\.result-copy|\.connection-window|\.desktop-warning-window|\.error-window|\.scoreboard|\.respawn-countdown)(?:\.[\w-]+)*(?:::[\w-]+)?$/,
   );
   assertLibraryOwnsChrome(
     'Buttons',
@@ -139,6 +142,8 @@ test('all live UI surfaces use 98.css structures and the HUD stays minimal', () 
     /class="connection-window window"/,
     /class="desktop-warning-window window"/,
     /class="error-window window"/,
+    /id="scoreboard" class="scoreboard window hidden"/,
+    /id="respawn-countdown" class="respawn-countdown window hidden"/,
   ];
   for (const pattern of requiredWindows) assert.match(html, pattern);
 
@@ -158,7 +163,11 @@ test('all live UI surfaces use 98.css structures and the HUD stays minimal', () 
   assert.doesNotMatch(visibleUiSources, /showPickup\s*\(/);
   assert.doesNotMatch(styles, /cover\.webp/i);
   assert.match(html, /<option value="arena">Arena \(1v1\)<\/option>/);
-  assert.match(html, /<option value="war">War \(40v40\)<\/option>/);
+  assert.match(html, /<option value="war">War Control \(20v20\)<\/option>/);
+  assert.match(
+    html,
+    /<option value="war-tdm">War TDM \(20v20\)<\/option>/,
+  );
   for (const classId of [
     'knives', 'shortbow', 'ember', 'crossbow',
     'lightning', 'longbow', 'greatsword', 'fireball',
@@ -192,6 +201,38 @@ test('all live UI surfaces use 98.css structures and the HUD stays minimal', () 
     visibleUiSources,
     /BATTLE VILLAGE|QUESTMASTER|REALM|RUNE|RELIC|TAKE SECURED|TAKE CONCEDED|BODY LOST|LAST CHAMPION|FIELD MANUAL|MARSHAL|PORTAL DID NOT OPEN|THROW\s*\/\s*FOAM|SWING\s*\/\s*FOAM|FIND A RIVAL|NEIGHBOR/i,
   );
+});
+
+test('Tab scoreboard and minimal HUD status use the shared Windows 98 structure', () => {
+  assert.match(
+    html,
+    /<th>Player<\/th><th>Kills<\/th><th>Deaths<\/th><th>Assists<\/th>/,
+  );
+  assert.match(html, /class="scoreboard-table sunken-panel"/);
+  assert.match(visibleUiSources, /event\.code === 'Tab' && this\.mode === 'match'/);
+  assert.match(visibleUiSources, /event\.preventDefault\(\);\s*this\.ui\.showScoreboard/);
+  assert.match(visibleUiSources, /event\.code === 'Tab'\) this\.ui\.hideScoreboard\(\)/);
+
+  const headerStart = html.indexOf('<header class="match-header window">');
+  const headerEnd = html.indexOf('</header>', headerStart);
+  const ping = html.indexOf('id="network-meter"');
+  assert.ok(headerStart >= 0 && headerEnd > headerStart);
+  assert.ok(ping > headerEnd, 'ping must sit outside the top-center match header');
+  assert.match(styles, /\.match-network\.status-bar\s*\{[\s\S]*?top:\s*8px;[\s\S]*?left:\s*8px;/);
+});
+
+test('respawn countdown is authoritative, centered, and hidden without a timer', () => {
+  assert.equal(respawnCountdownText({ dead: false, respawnRemaining: 5_000 }), '');
+  assert.equal(respawnCountdownText({ dead: true, respawnRemaining: 5_000 }), 'Respawn: 5');
+  assert.equal(respawnCountdownText({ dead: true, respawnRemaining: 4_001 }), 'Respawn: 5');
+  assert.equal(respawnCountdownText({ dead: true, respawnRemaining: 4_000 }), 'Respawn: 4');
+  assert.equal(respawnCountdownText({ dead: true, respawnRemaining: 1 }), 'Respawn: 1');
+  assert.equal(respawnCountdownText({ dead: true, respawnRemaining: 0 }), '');
+  assert.match(
+    styles,
+    /\.respawn-countdown\.window\s*\{[\s\S]*?top:\s*50%;[\s\S]*?left:\s*50%;/,
+  );
+  assert.doesNotMatch(visibleUiSources, /`Respawn \$\{/);
 });
 
 test('War next-class control is limited to the respawn window', () => {

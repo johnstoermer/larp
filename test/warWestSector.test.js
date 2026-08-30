@@ -118,7 +118,7 @@ test('every visible physical piece maps to one valid authority collider', () => 
   }
 });
 
-test('west architecture keeps all eighty spawn positions safely clear', () => {
+test('west architecture keeps all forty spawn positions safely clear', () => {
   for (let team = 0; team < 2; team += 1) {
     for (let slot = 0; slot < WAR_TEAM_SIZE; slot += 1) {
       const [x, , z] = warSpawnForSlot(team, slot);

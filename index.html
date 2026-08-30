@@ -45,7 +45,8 @@
                   <span>Mode</span>
                   <select id="game-mode">
                     <option value="arena">Arena (1v1)</option>
-                    <option value="war">War (40v40)</option>
+                    <option value="war">War Control (20v20)</option>
+                    <option value="war-tdm">War TDM (20v20)</option>
                   </select>
                 </label>
                 <label id="war-class-field" class="war-class-field field-row-stacked hidden">
@@ -141,10 +142,11 @@
               <span id="war-capture-fill" class="progress-indicator-bar"></span>
             </div>
           </div>
-          <div id="network-meter" class="match-network status-bar hidden">
-            <p class="status-bar-field">Ping: <strong id="network-ping">-- ms</strong></p>
-          </div>
         </header>
+
+        <div id="network-meter" class="match-network status-bar hidden" aria-label="Network latency">
+          <p class="status-bar-field">Ping: <strong id="network-ping">-- ms</strong></p>
+        </div>
 
         <div class="player-status health-panel window">
           <div class="window-body">
@@ -175,6 +177,22 @@
         </div>
         <div id="hit-marker" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
         <div id="damage-direction" aria-hidden="true"></div>
+
+        <section id="scoreboard" class="scoreboard window hidden" aria-label="Scoreboard">
+          <div class="title-bar"><div class="title-bar-text">Scoreboard</div></div>
+          <div class="window-body">
+            <table class="scoreboard-table sunken-panel">
+              <thead>
+                <tr><th>Player</th><th>Kills</th><th>Deaths</th><th>Assists</th></tr>
+              </thead>
+              <tbody id="scoreboard-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <div id="respawn-countdown" class="respawn-countdown window hidden" role="status" aria-live="polite">
+          <div class="window-body"><strong id="respawn-countdown-value"></strong></div>
+        </div>
       </section>
 
       <section id="announcement" class="window hidden" aria-live="assertive">

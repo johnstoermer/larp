@@ -1,10 +1,18 @@
 import * as THREE from 'three';
-import { WAR_CLASSES, normalizeWarClass } from '../../shared/warConfig.js';
+import {
+  WAR_CLASSES,
+  WAR_COMBATANT_COUNT,
+  normalizeWarClass,
+} from '../../shared/warConfig.js';
 import { fighterTextureUrl } from './BotController.js';
-import { createHealthBarTexture, updateHealthBarTexture } from './healthBar.js';
+import {
+  HEALTH_BAR_COLORS,
+  createHealthBarTexture,
+  updateHealthBarTexture,
+} from './healthBar.js';
 import { loadPhotoTexture } from './photoTexture.js';
 
-export const WAR_RENDER_POOL_SIZE = 79;
+export const WAR_RENDER_POOL_SIZE = WAR_COMBATANT_COUNT - 1;
 export const WAR_RENDER_DISTANCE = 190;
 export const WAR_HEALTH_BAR_DISTANCE = 58;
 export const WAR_FULL_ANIMATION_DISTANCE = 72;
@@ -86,7 +94,7 @@ function createRenderSlot(index) {
   sprite.scale.set(1.65, 2.5, 1);
   root.add(sprite);
 
-  const healthTexture = createHealthBarTexture(1);
+  const healthTexture = createHealthBarTexture(1, HEALTH_BAR_COLORS.enemy);
   const healthMaterial = new THREE.SpriteMaterial({
     map: healthTexture,
     depthTest: true,
@@ -109,6 +117,7 @@ function createRenderSlot(index) {
     healthBar,
     healthTexture,
     healthRatio: 1,
+    healthFill: HEALTH_BAR_COLORS.enemy,
     classId: 'shortbow',
     fighterState: 'idle',
     target: new THREE.Vector3(),
@@ -124,6 +133,7 @@ export class WarCrowd {
     this.capacity = Math.max(1, Math.floor(capacity));
     this.renderDistance = Math.max(1, Number(renderDistance) || WAR_RENDER_DISTANCE);
     this.localId = null;
+    this.localTeam = null;
     this.root = new THREE.Group();
     this.root.name = 'war-lightweight-fighter-pool';
     this.scene.add(this.root);
@@ -236,11 +246,19 @@ export class WarCrowd {
       const definition = WAR_CLASSES[classId];
       const maxHealth = Math.max(1, Number(state.maxHealth) || definition.health);
       const ratio = Math.max(0, Math.min(1, Number(state.health) / maxHealth || 0));
-      const metrics = ratio === slot.healthRatio
+      const relationship = this.localTeam != null &&
+        Number(state.team) === Number(this.localTeam)
+        ? 'ally'
+        : 'enemy';
+      const healthFill = HEALTH_BAR_COLORS[relationship];
+      const metrics = ratio === slot.healthRatio && healthFill === slot.healthFill
         ? slot.healthTexture.userData
-        : updateHealthBarTexture(slot.healthTexture, ratio);
+        : updateHealthBarTexture(slot.healthTexture, ratio, healthFill);
       slot.healthRatio = ratio;
+      slot.healthFill = healthFill;
       slot.healthBar.userData.ratio = ratio;
+      slot.healthBar.userData.relationship = relationship;
+      slot.healthBar.userData.fill = healthFill;
       slot.healthBar.userData.fillPixels = metrics.fillPixels;
       slot.healthBar.userData.fillCapacity = metrics.fillCapacity;
       this.healthDirection.copy(slot.target);

@@ -1,6 +1,6 @@
 import { LatencyTracker } from './LatencyTracker.js';
 
-const PROTOCOL_VERSION = 5;
+const PROTOCOL_VERSION = 6;
 const RECONNECT_DELAYS = [350, 700, 1200, 2000, 3200, 5000];
 const PING_INTERVAL_MS = 1000;
 const PING_TIMEOUT_MS = 5000;
@@ -259,9 +259,9 @@ export class NetworkClient extends EventTarget {
     return this.send({ type: 'quick_play' });
   }
 
-  warPlay(classId) {
+  warPlay(classId, warMode = 'control') {
     this.closeAfterLeave = false;
-    return this.send({ type: 'war_play', classId });
+    return this.send({ type: 'war_play', classId, warMode });
   }
 
   createPrivate() {

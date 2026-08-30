@@ -326,6 +326,23 @@ test('server-owned hit registration applies damage and ends a take', () => {
   room.update(3160);
   assert.equal(room.phase, 'takeEnd');
   assert.deepEqual(room.takes, [1, 0]);
+  assert.equal(shooter.kills, 1);
+  assert.equal(shooter.deaths, 0);
+  assert.equal(shooter.assists, 0);
+  assert.equal(target.kills, 0);
+  assert.equal(target.deaths, 1);
+  assert.equal(target.assists, 0);
+  assert.deepEqual(
+    room.createSnapshot(3160).players.map(({ kills, deaths, assists }) => ({
+      kills,
+      deaths,
+      assists,
+    })),
+    [
+      { kills: 1, deaths: 0, assists: 0 },
+      { kills: 0, deaths: 1, assists: 0 },
+    ],
+  );
 });
 
 test('server rejects shot directions that diverge from reported aim', () => {
@@ -415,12 +432,48 @@ test('the trade window preserves legitimate simultaneous eliminations', () => {
 
   assert.equal(firstPlayer.dead, true);
   assert.equal(secondPlayer.dead, true);
+  assert.deepEqual(
+    room.players.map(({ kills, deaths, assists }) => ({ kills, deaths, assists })),
+    [
+      { kills: 1, deaths: 1, assists: 0 },
+      { kills: 1, deaths: 1, assists: 0 },
+    ],
+  );
   assert.equal(room.phase, 'takeEnd');
   assert.deepEqual(room.takes, [0, 0]);
   const takeEnd = first.messages.find(
     (message) => message.type === 'event' && message.event === 'take_end',
   );
   assert.equal(takeEnd.reason, 'mutual');
+});
+
+test('Arena K/D/A persists across takes and resets for an accepted rematch', () => {
+  const first = createSession('FIRST');
+  const second = createSession('SECOND');
+  const room = new Room({
+    sessions: [first, second],
+    rules: fastRules,
+    now: 4_500,
+  });
+  room.players[0].kills = 4;
+  room.players[0].deaths = 2;
+  room.players[1].kills = 2;
+  room.players[1].deaths = 4;
+
+  room.resetTake(4_600);
+  assert.deepEqual(
+    room.players.map(({ kills, deaths, assists }) => [kills, deaths, assists]),
+    [[4, 2, 0], [2, 4, 0]],
+  );
+
+  room.phase = 'result';
+  room.requestRematch(first, 4_700);
+  room.requestRematch(second, 4_701);
+  assert.equal(room.phase, 'loading');
+  assert.deepEqual(
+    room.players.map(({ kills, deaths, assists }) => [kills, deaths, assists]),
+    [[0, 0, 0], [0, 0, 0]],
+  );
 });
 
 test('server collision and ray helpers match arena boundaries', () => {

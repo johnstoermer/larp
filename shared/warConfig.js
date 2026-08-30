@@ -1,10 +1,20 @@
 import { WAR_EAST_SOUTH_SECTOR } from './warEastSouthSector.js';
-import { rotatedFootprintBounds } from './warSceneryGeometry.js';
+import {
+  fixedPhotoPropCollisionBounds,
+  quantizeFixedPhotoPropYaw,
+} from './warSceneryGeometry.js';
 import { WAR_WEST_SECTOR } from './warWestSector.js';
 
-export const WAR_TEAM_SIZE = 40;
+export const WAR_TEAM_SIZE = 20;
 export const WAR_TEAM_COUNT = 2;
 export const WAR_COMBATANT_COUNT = WAR_TEAM_SIZE * WAR_TEAM_COUNT;
+
+export const WAR_MODE_CONTROL = 'control';
+export const WAR_MODE_TEAM_DEATHMATCH = 'team_deathmatch';
+export const WAR_MODE_IDS = Object.freeze([
+  WAR_MODE_CONTROL,
+  WAR_MODE_TEAM_DEATHMATCH,
+]);
 
 export const WAR_RULES = Object.freeze({
   unlockMs: 15_000,
@@ -13,12 +23,41 @@ export const WAR_RULES = Object.freeze({
   scoreToWin: 100,
   overtimeThreshold: 99,
   overtimeGraceMs: 500,
-  respawnMs: 8_000,
+  respawnMs: 5_000,
+  assistWindowMs: 10_000,
   botTickRate: 10,
   snapshotRate: 10,
   reconnectMs: 20_000,
   destroyAfterMs: 45_000,
 });
+
+export const WAR_MODES = Object.freeze({
+  [WAR_MODE_CONTROL]: Object.freeze({
+    id: WAR_MODE_CONTROL,
+    name: 'Control',
+    scoreType: 'control',
+    scoreToWin: WAR_RULES.scoreToWin,
+  }),
+  [WAR_MODE_TEAM_DEATHMATCH]: Object.freeze({
+    id: WAR_MODE_TEAM_DEATHMATCH,
+    name: 'Team Deathmatch',
+    scoreType: 'kills',
+    scoreToWin: 100,
+  }),
+});
+
+export function normalizeWarMode(value) {
+  const id = String(value ?? '').trim().toLowerCase();
+  if (
+    id === WAR_MODE_TEAM_DEATHMATCH ||
+    id === 'team-deathmatch' ||
+    id === 'deathmatch' ||
+    id === 'tdm'
+  ) {
+    return WAR_MODE_TEAM_DEATHMATCH;
+  }
+  return WAR_MODE_CONTROL;
+}
 
 export const WAR_CLASSES = Object.freeze({
   knives: Object.freeze({
@@ -287,9 +326,17 @@ export const WAR_GENERATED_PHOTO_PROPS = Object.freeze(
   [...LEGACY_PHOTO_REPLACEMENTS.entries()]
     .filter(([index]) => !LEGACY_COVER_EXCLUSIONS.has(index))
     .map(([index, replacement]) => {
-      const collisionBounds = Object.freeze([...mirroredCover[index]]);
+      const originalBounds = mirroredCover[index];
+      const fixedYaw = quantizeFixedPhotoPropYaw(replacement.yaw);
+      const collisionBounds = Object.freeze(fixedPhotoPropCollisionBounds(
+        replacement.position,
+        replacement.width,
+        originalBounds[4] - originalBounds[1],
+        fixedYaw,
+      ));
       return Object.freeze({
         ...replacement,
+        yaw: fixedYaw,
         type: replacement.id,
         fixedPlane: true,
         presentation: 'fixed-plane',
@@ -306,12 +353,12 @@ function roadsidePhotoProp({
   position,
   width,
   height,
-  depth,
   yaw = 0,
   visibleBottomRatio = 0,
   collisionHeight = height * 0.68,
   alphaTest = 0.035,
 }) {
+  const fixedYaw = quantizeFixedPhotoPropYaw(yaw);
   return Object.freeze({
     id,
     type: id,
@@ -319,18 +366,17 @@ function roadsidePhotoProp({
     position: Object.freeze(position),
     width,
     height,
-    yaw,
+    yaw: fixedYaw,
     visibleBottomRatio,
     alphaTest,
     fixedPlane: true,
     presentation: 'fixed-plane',
     solid: true,
-    collisionBounds: Object.freeze(rotatedFootprintBounds(
+    collisionBounds: Object.freeze(fixedPhotoPropCollisionBounds(
       position,
       width,
-      depth,
       collisionHeight,
-      yaw,
+      fixedYaw,
     )),
   });
 }
@@ -338,52 +384,52 @@ function roadsidePhotoProp({
 export const WAR_ROADSIDE_PHOTO_PROPS = Object.freeze([
   roadsidePhotoProp({
     id: 'north-road-cart', asset: '/assets/larp/props/wooden-cart.webp',
-    position: [-10.5, 0, -50], width: 5.3, height: 3.55, depth: 2.2,
+    position: [-10.5, 0, -50], width: 5.3, height: 3.55,
     yaw: 0.18, visibleBottomRatio: 105 / 512, collisionHeight: 1.9,
   }),
   roadsidePhotoProp({
     id: 'north-road-hay', asset: '/assets/larp/props/hay-bales.webp',
-    position: [11.5, 0, -57], width: 5.5, height: 2.2, depth: 2.2,
+    position: [11.5, 0, -57], width: 5.5, height: 2.2,
     yaw: -0.22, visibleBottomRatio: 68 / 512, collisionHeight: 1.45,
   }),
   roadsidePhotoProp({
     id: 'north-road-target', asset: '/assets/larp/props/archery-target.webp',
-    position: [-12, 0, -37], width: 2.4, height: 2.85, depth: 0.65,
+    position: [-12, 0, -37], width: 2.4, height: 2.85,
     yaw: Math.PI * 0.1, visibleBottomRatio: 15 / 640, collisionHeight: 2.15,
   }),
   roadsidePhotoProp({
     id: 'north-spawn-camp', asset: '/assets/larp/props/canvas-tent.webp',
-    position: [44, 0, -88], width: 4.8, height: 3.2, depth: 3.2,
+    position: [44, 0, -88], width: 4.8, height: 3.2,
     yaw: -0.32, visibleBottomRatio: 11 / 427, collisionHeight: 2.35,
   }),
   roadsidePhotoProp({
     id: 'north-road-barricade', asset: '/assets/larp/war/foam-barricade.webp',
-    position: [0, 0, -43], width: 8.7, height: 3.4, depth: 2.8,
+    position: [0, 0, -43], width: 8.7, height: 3.4,
     visibleBottomRatio: 0.046, collisionHeight: 2.4, alphaTest: 0.08,
   }),
   roadsidePhotoProp({
     id: 'south-road-cart', asset: '/assets/larp/props/wooden-cart.webp',
-    position: [10.5, 0, 50], width: 5.3, height: 3.55, depth: 2.2,
+    position: [10.5, 0, 50], width: 5.3, height: 3.55,
     yaw: Math.PI + 0.18, visibleBottomRatio: 105 / 512, collisionHeight: 1.9,
   }),
   roadsidePhotoProp({
     id: 'central-south-road-hay', asset: '/assets/larp/props/hay-bales.webp',
-    position: [-11.5, 0, 57], width: 5.5, height: 2.2, depth: 2.2,
+    position: [-11.5, 0, 57], width: 5.5, height: 2.2,
     yaw: Math.PI - 0.22, visibleBottomRatio: 68 / 512, collisionHeight: 1.45,
   }),
   roadsidePhotoProp({
     id: 'south-road-target', asset: '/assets/larp/props/archery-target.webp',
-    position: [12, 0, 37], width: 2.4, height: 2.85, depth: 0.65,
+    position: [12, 0, 37], width: 2.4, height: 2.85,
     yaw: Math.PI * 1.1, visibleBottomRatio: 15 / 640, collisionHeight: 2.15,
   }),
   roadsidePhotoProp({
     id: 'south-spawn-camp', asset: '/assets/larp/props/canvas-tent.webp',
-    position: [44, 0, 88], width: 4.8, height: 3.2, depth: 3.2,
+    position: [44, 0, 88], width: 4.8, height: 3.2,
     yaw: Math.PI - 0.32, visibleBottomRatio: 11 / 427, collisionHeight: 2.35,
   }),
   roadsidePhotoProp({
     id: 'central-south-road-barricade', asset: '/assets/larp/war/foam-barricade.webp',
-    position: [0, 0, 43], width: 8.7, height: 3.4, depth: 2.8,
+    position: [0, 0, 43], width: 8.7, height: 3.4,
     yaw: Math.PI, visibleBottomRatio: 0.046, collisionHeight: 2.4, alphaTest: 0.08,
   }),
 ]);
@@ -504,7 +550,12 @@ export const WAR_MAP = Object.freeze({
   boundaryColliders: WAR_BOUNDARY_COLLIDERS,
   colliders: Object.freeze([
     ...WAR_BOUNDARY_COLLIDERS,
-    ...WAR_LEGACY_COVER.map((entry) => entry.bounds),
+    ...WAR_LEGACY_COVER.map((entry) => (
+      entry.photoReplacementId
+        ? WAR_GENERATED_PHOTO_PROPS.find((prop) => prop.id === entry.photoReplacementId)
+          .collisionBounds
+        : entry.bounds
+    )),
     ...WAR_SECTORS.flatMap((sector) => sector.colliders),
     ...WAR_ROADSIDE_PHOTO_PROPS.map((entry) => entry.collisionBounds),
   ]),

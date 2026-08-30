@@ -24,10 +24,11 @@ match against the Questmaster bot is also available from the title screen.
 
 Win two takes to claim a round and four rounds to win the match.
 
-War is a separate 40v40 control-point match on a 240-by-200 open field. Humans
-choose a class and replace deterministic bots, which keep both teams at 40.
-There are no field pickups: hold the central point to reach 100%, with a
-contested overtime grace at the end.
+War has two separate 20v20 matches on a 240-by-200 open field. Humans choose a
+class and replace deterministic bots, which keep both teams at 20. Control is
+won by holding the central point to reach 100%, with a contested overtime grace
+at the end. Team Deathmatch is won by the first team to reach 100 kills. Both
+modes use five-second respawns and contain no field pickups.
 
 ## Arsenal
 
@@ -72,11 +73,12 @@ ammo-free.
 - `Space` jump / wall-run
 - `Control` or `C` slide
 - `R` reload
+- `Tab` hold scoreboard (kills, deaths, assists)
 - `Escape` pause
 
 ## Multiplayer
 
-The Node/WebSocket server broadcasts Arena at 30 Hz and the 80-slot War
+The Node/WebSocket server broadcasts Arena at 30 Hz and each 40-slot War
 simulation at 10 Hz. It owns
 match time, phases, scores, health, ammunition, reloads, pickups,
 fire cadence, hit tests, fireball simulation, overtime, and disconnect

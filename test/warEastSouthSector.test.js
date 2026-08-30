@@ -158,7 +158,7 @@ test('sector colliders exactly match physical scenery and remain in map bounds',
   );
 });
 
-test('all eighty spawn positions retain a broad unobstructed deployment area', () => {
+test('all forty spawn positions retain a broad unobstructed deployment area', () => {
   for (let team = 0; team < 2; team += 1) {
     for (let slot = 0; slot < WAR_TEAM_SIZE; slot += 1) {
       const spawn = warSpawnForSlot(team, slot);

@@ -1,9 +1,19 @@
 import { clamp, formatTime } from './math.js';
+import {
+  WAR_MODE_TEAM_DEATHMATCH,
+  normalizeWarMode,
+} from '../../shared/warConfig.js';
 
 const byId = (id) => document.getElementById(id);
 
 export function shouldShowWarRespawnClass(warMatch, player) {
   return Boolean(warMatch && player?.dead);
+}
+
+export function respawnCountdownText(player) {
+  const remaining = Number(player?.respawnRemaining);
+  if (!player?.dead || !Number.isFinite(remaining) || remaining <= 0) return '';
+  return `Respawn: ${Math.max(1, Math.ceil(remaining / 1_000))}`;
 }
 
 export class Interface {
@@ -54,6 +64,10 @@ export class Interface {
     this.resultOpponentName = byId('result-opponent-name');
     this.connectionOverlay = byId('connection-overlay');
     this.connectionDetail = byId('connection-detail');
+    this.scoreboard = byId('scoreboard');
+    this.scoreboardBody = byId('scoreboard-body');
+    this.respawnCountdown = byId('respawn-countdown');
+    this.respawnCountdownValue = byId('respawn-countdown-value');
     this.playerRounds = byId('player-rounds');
     this.botRounds = byId('bot-rounds');
     this.playerTakes = byId('player-takes');
@@ -86,20 +100,28 @@ export class Interface {
     this.onlineMatch = false;
     this.warMatch = false;
     this.warTeam = 0;
+    this.warMode = 'control';
     this.currentOpponent = 'Computer';
     this.hitUntil = 0;
     this.damageUntil = 0;
     this.crosshairUntil = 0;
+    this.scoreboardVisible = false;
+    this.scoreboardSignature = '';
     this.setTakes(this.playerTakes, 0);
     this.setTakes(this.botTakes, 0);
   }
 
   setSelectedMode(mode) {
-    const war = mode === 'war';
-    this.gameMode.value = war ? 'war' : 'arena';
+    const selected = mode === 'war-tdm' ? 'war-tdm' : mode === 'war' ? 'war' : 'arena';
+    const war = selected !== 'arena';
+    this.gameMode.value = selected;
     this.warClassField.classList.toggle('hidden', !war);
     this.arenaActions.classList.toggle('hidden', war);
-    this.onlineButton.textContent = war ? 'Join War' : 'Quick Match';
+    this.onlineButton.textContent = selected === 'war-tdm'
+      ? 'Join Team Deathmatch'
+      : selected === 'war'
+        ? 'Join Control'
+        : 'Quick Match';
   }
 
   showTitle() {
@@ -110,6 +132,8 @@ export class Interface {
     this.resultScreen.classList.remove('active');
     this.hud.classList.add('hidden');
     this.announcement.classList.add('hidden');
+    this.hideScoreboard();
+    this.updateRespawnCountdown(null);
   }
 
   showPrivateLobby(prefill = '') {
@@ -180,14 +204,18 @@ export class Interface {
     this.quitButton.textContent = active ? 'Forfeit and Quit' : 'Quit to Menu';
   }
 
-  setWarMatch(active, team = 0) {
+  setWarMatch(active, team = 0, warMode = this.warMode) {
     this.warMatch = Boolean(active);
     this.warTeam = Number(team) === 1 ? 1 : 0;
+    this.warMode = normalizeWarMode(warMode);
     this.arenaScore.classList.toggle('hidden', this.warMatch);
     this.warScore.classList.toggle('hidden', !this.warMatch);
-    if (!this.warMatch) {
+    if (!this.warMatch || this.warMode === WAR_MODE_TEAM_DEATHMATCH) {
       this.warCapture.classList.add('hidden');
+    }
+    if (!this.warMatch) {
       this.warRespawnClassField?.classList.add('hidden');
+      this.updateRespawnCountdown(null);
     }
   }
 
@@ -206,11 +234,13 @@ export class Interface {
     this.pauseScreen.classList.remove('active');
     this.resultScreen.classList.remove('active');
     this.hud.classList.remove('hidden');
+    this.hideScoreboard();
   }
 
   showPause() {
     this.pauseScreen.classList.add('active');
     this.hud.classList.add('hidden');
+    this.hideScoreboard();
   }
 
   hidePause() {
@@ -223,6 +253,8 @@ export class Interface {
     this.hud.classList.add('hidden');
     this.announcement.classList.add('hidden');
     this.pauseScreen.classList.remove('active');
+    this.hideScoreboard();
+    this.updateRespawnCountdown(null);
     this.resultTitle.textContent = won ? 'Win' : 'Loss';
     this.resultPlayerScore.textContent = playerScore;
     this.resultBotScore.textContent = botScore;
@@ -262,6 +294,7 @@ export class Interface {
   }
 
   updateHUD(state, player, bot, map, movement) {
+    this.updateRespawnCountdown?.(null);
     if (this.playerRounds.textContent !== String(state.playerRounds)) {
       this.playerRounds.textContent = state.playerRounds;
     }
@@ -290,31 +323,40 @@ export class Interface {
     this.crosshair.classList.toggle('focused', player.focused);
   }
 
-  updateWarHUD(control, player, team = this.warTeam) {
-    const scores = Array.isArray(control?.scores) ? control.scores : [0, 0];
-    this.warRedScore.textContent = `${Math.floor(Number(scores[0]) || 0)}%`;
-    this.warBlueScore.textContent = `${Math.floor(Number(scores[1]) || 0)}%`;
+  updateWarHUD(control, player, team = this.warTeam, warState = null) {
+    const warMode = normalizeWarMode(warState?.warMode ?? this.warMode);
+    const teamDeathmatch = warMode === WAR_MODE_TEAM_DEATHMATCH;
+    const scores = teamDeathmatch
+      ? (Array.isArray(warState?.teamScores) ? warState.teamScores : [0, 0])
+      : (Array.isArray(control?.scores) ? control.scores : [0, 0]);
+    const suffix = teamDeathmatch ? '' : '%';
+    this.warRedScore.textContent = `${Math.floor(Number(scores[0]) || 0)}${suffix}`;
+    this.warBlueScore.textContent = `${Math.floor(Number(scores[1]) || 0)}${suffix}`;
 
-    let label = 'Point neutral';
-    if (control?.phase === 'locked') label = 'Point locked';
-    else if (control?.overtime) label = 'Overtime';
-    else if (control?.contested) label = 'Point contested';
-    else if (control?.captureTeam === 0) label = 'Red capturing';
-    else if (control?.captureTeam === 1) label = 'Blue capturing';
-    else if (control?.owner === 0) label = 'Red controls point';
-    else if (control?.owner === 1) label = 'Blue controls point';
+    let label = teamDeathmatch ? 'Team Deathmatch' : 'Point neutral';
+    if (!teamDeathmatch && control?.phase === 'locked') label = 'Point locked';
+    else if (!teamDeathmatch && control?.overtime) label = 'Overtime';
+    else if (!teamDeathmatch && control?.contested) label = 'Point contested';
+    else if (!teamDeathmatch && control?.captureTeam === 0) label = 'Red capturing';
+    else if (!teamDeathmatch && control?.captureTeam === 1) label = 'Blue capturing';
+    else if (!teamDeathmatch && control?.owner === 0) label = 'Red controls point';
+    else if (!teamDeathmatch && control?.owner === 1) label = 'Blue controls point';
     this.roundLabel.textContent = label;
 
     const respawnRemaining = Number(player?.respawnRemaining) || 0;
-    this.timer.textContent = player?.dead
-      ? `Respawn ${Math.max(1, Math.ceil(respawnRemaining / 1000))}`
-      : control?.phase === 'locked'
-        ? formatTime((Number(control.unlockRemaining) || 0) / 1000)
-        : control?.overtime
-          ? 'OT'
-          : '';
+    this.timer.textContent = control?.phase === 'locked'
+      ? formatTime((Number(control.unlockRemaining) || 0) / 1000)
+      : control?.overtime
+        ? 'OT'
+        : '';
+    this.updateRespawnCountdown?.({
+      dead: Boolean(player?.dead),
+      respawnRemaining,
+    });
 
-    const captureVisible = control?.captureTeam === 0 || control?.captureTeam === 1;
+    const captureVisible = !teamDeathmatch && (
+      control?.captureTeam === 0 || control?.captureTeam === 1
+    );
     this.warCapture.classList.toggle('hidden', !captureVisible);
     this.warCapture.setAttribute(
       'aria-label',
@@ -341,7 +383,7 @@ export class Interface {
       'empty',
       usesAmmo && (Number(player?.ammo) || 0) <= 0,
     );
-    this.setWarMatch(true, team);
+    this.setWarMatch(true, team, warMode);
     this.warRespawnClassField?.classList.toggle(
       'hidden',
       !shouldShowWarRespawnClass(this.warMatch, player),
@@ -357,6 +399,50 @@ export class Interface {
 
   hideAnnouncement() {
     this.announcement.classList.add('hidden');
+  }
+
+  setScoreboardRows(rows = []) {
+    const normalized = rows.map((row) => ({
+      id: row.id,
+      name: String(row.name || 'Player').slice(0, 18),
+      kills: Math.max(0, Math.floor(Number(row.kills) || 0)),
+      deaths: Math.max(0, Math.floor(Number(row.deaths) || 0)),
+      assists: Math.max(0, Math.floor(Number(row.assists) || 0)),
+      local: Boolean(row.local),
+    }));
+    const signature = JSON.stringify(normalized);
+    if (signature === this.scoreboardSignature) return;
+    this.scoreboardSignature = signature;
+    const fragment = document.createDocumentFragment();
+    for (const row of normalized) {
+      const tableRow = document.createElement('tr');
+      if (row.local) tableRow.setAttribute('aria-current', 'true');
+      for (const value of [row.name, row.kills, row.deaths, row.assists]) {
+        const cell = document.createElement('td');
+        cell.textContent = String(value);
+        tableRow.append(cell);
+      }
+      fragment.append(tableRow);
+    }
+    this.scoreboardBody.replaceChildren(fragment);
+  }
+
+  showScoreboard(rows) {
+    this.setScoreboardRows(rows);
+    this.scoreboardVisible = true;
+    this.scoreboard.classList.remove('hidden');
+  }
+
+  hideScoreboard() {
+    this.scoreboardVisible = false;
+    this.scoreboard?.classList.add('hidden');
+  }
+
+  updateRespawnCountdown(player) {
+    const text = respawnCountdownText(player);
+    if (this.respawnCountdownValue) this.respawnCountdownValue.textContent = text;
+    this.respawnCountdown?.classList.toggle('hidden', !text);
+    return text;
   }
 
   showHit(headshot, time) {

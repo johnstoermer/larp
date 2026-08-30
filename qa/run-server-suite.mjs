@@ -3,8 +3,10 @@ import { spawn } from 'node:child_process';
 const scripts = [
   'test:title',
   'test:browser',
+  'test:hud',
   'test:multiplayer',
   'test:war',
+  'test:war-tdm',
   'test:war-load',
   'test:war-performance',
   'test:performance',

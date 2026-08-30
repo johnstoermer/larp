@@ -9,6 +9,12 @@ import {
   WAR_TEAM_SIZE,
   warSpawnForSlot,
 } from '../shared/warConfig.js';
+import {
+  FIXED_PHOTO_PROP_PLANE_DEPTH,
+  fixedPhotoPropCollisionBounds,
+  quantizeFixedPhotoPropYaw,
+  rotatedFootprintExtents,
+} from '../shared/warSceneryGeometry.js';
 import { Arena } from '../src/game/Arena.js';
 import {
   WAR_CENTER_ROAD_SEGMENTS,
@@ -18,9 +24,9 @@ import {
   WarArena,
 } from '../src/game/WarArena.js';
 
-test('War is an 80-combatant symmetric map with no field pickups', () => {
-  assert.equal(WAR_TEAM_SIZE, 40);
-  assert.equal(WAR_COMBATANT_COUNT, 80);
+test('War is a 40-combatant symmetric map with no field pickups', () => {
+  assert.equal(WAR_TEAM_SIZE, 20);
+  assert.equal(WAR_COMBATANT_COUNT, 40);
   assert.deepEqual(WAR_MAP.pickups, []);
   assert.ok(WAR_MAP.bounds.x >= 100);
   assert.ok(WAR_MAP.bounds.z >= 80);
@@ -80,6 +86,58 @@ test('fixed photo props keep their authored yaw and grounded transparent padding
   prop.material.dispose();
 });
 
+test('every War photo prop shares one thin-plane visual and authority footprint', () => {
+  const colliderKeys = new Set(WAR_MAP.colliders.map((bounds) => JSON.stringify(bounds)));
+  const visibleCover = [
+    ...WAR_MAP.structureParts
+      .filter((part) => part.solid)
+      .map((part) => ({ id: part.id, bounds: part.bounds })),
+    ...WAR_MAP.legacyCover
+      .filter((cover) => !cover.photoReplacementId)
+      .map((cover) => ({ id: cover.id, bounds: cover.bounds })),
+  ];
+  const horizontalGap = (first, second) => Math.hypot(
+    Math.max(first[0] - second[3], second[0] - first[3], 0),
+    Math.max(first[2] - second[5], second[2] - first[5], 0),
+  );
+
+  for (const prop of WAR_MAP.photoProps) {
+    assert.equal(prop.fixedPlane, true, `${prop.id}: not marked as a fixed plane`);
+    assert.equal(prop.presentation, 'fixed-plane', `${prop.id}: wrong presentation`);
+    assert.equal(prop.yaw, quantizeFixedPhotoPropYaw(prop.yaw));
+    const collisionHeight = prop.collisionBounds[4] - prop.position[1];
+    assert.deepEqual(
+      prop.collisionBounds,
+      fixedPhotoPropCollisionBounds(prop.position, prop.width, collisionHeight, prop.yaw),
+      `${prop.id}: collision does not match its fixed photo plane`,
+    );
+    const [extentX, extentZ] = rotatedFootprintExtents(
+      prop.width,
+      FIXED_PHOTO_PROP_PLANE_DEPTH,
+      prop.yaw,
+    );
+    assert.ok(Math.abs(prop.collisionBounds[3] - prop.collisionBounds[0] - extentX) < 1e-10);
+    assert.ok(Math.abs(prop.collisionBounds[5] - prop.collisionBounds[2] - extentZ) < 1e-10);
+    assert.ok(
+      Math.min(
+        prop.collisionBounds[3] - prop.collisionBounds[0],
+        prop.collisionBounds[5] - prop.collisionBounds[2],
+      ) <= 0.081,
+      `${prop.id}: fixed photo wall is thicker than 8.1 cm`,
+    );
+    assert.ok(
+      colliderKeys.has(JSON.stringify(prop.collisionBounds)),
+      `${prop.id}: thin photo collider missing from server authority`,
+    );
+    for (const cover of visibleCover) {
+      assert.ok(
+        horizontalGap(prop.collisionBounds, cover.bounds) >= 0.35,
+        `${prop.id}: fixed plane is embedded in visible cover ${cover.id}`,
+      );
+    }
+  }
+});
+
 test('WarArena instantiates all dense scenery with fixed photo geometry', () => {
   const scene = new THREE.Scene();
   const arena = new WarArena(scene, {});
@@ -108,6 +166,11 @@ test('WarArena instantiates all dense scenery with fixed photo geometry', () => 
   assert.ok(arena.surfaceMeshes.every((mesh) => mesh.visible === false));
   assert.ok(arena.roadMeshes.every((mesh) => mesh.visible === false));
   assert.ok(arena.structureBatches.every((mesh) => mesh.isInstancedMesh));
+  assert.ok(WAR_MAP.structureParts.some((part) => part.role === 'roof'));
+  assert.ok(
+    arena.structureBatches.some((mesh) => mesh.material === arena.materials.roof),
+    'Arena-only roof removal must retain War roof/debris material batches',
+  );
   assert.ok(arena.surfaceBatches.every((mesh) => mesh.isInstancedMesh));
   assert.ok(arena.roadBatches.every((mesh) => mesh.isInstancedMesh));
   assert.ok(arena.structureTrimMeshes.every((mesh) => mesh.isInstancedMesh));
@@ -117,6 +180,12 @@ test('WarArena instantiates all dense scenery with fixed photo geometry', () => 
   assert.equal(arena.structureTrimMeshes.length, 1);
   assert.ok(arena.photoProps.every(({ collisionProxy }) =>
     collisionProxy?.visible === false));
+  arena.setControlState(null);
+  assert.equal(arena.objectiveMarker.visible, false);
+  assert.equal(arena.objectiveFill.visible, false);
+  arena.setControlState({ owner: null, contested: false });
+  assert.equal(arena.objectiveMarker.visible, true);
+  assert.equal(arena.objectiveFill.visible, true);
   const proxy = arena.photoProps[0].collisionProxy;
   const proxyBounds = arena.photoProps[0].collisionBounds;
   const proxyCenter = new THREE.Vector3(
@@ -130,10 +199,22 @@ test('WarArena instantiates all dense scenery with fixed photo geometry', () => 
     arena.raycaster.intersectObject(proxy, false).length > 0,
     'hidden collision proxies must remain available to explicit shot raycasts',
   );
-  for (const cutout of arena.photoPropCutouts) {
+  for (const [index, cutout] of arena.photoPropCutouts.entries()) {
+    const authored = WAR_MAP.photoProps[index];
+    const runtime = arena.photoProps[index];
     assert.equal(cutout.type, 'Mesh');
     assert.equal(cutout.userData.fixedPhotoProp, true);
     assert.equal(cutout.isSprite, undefined);
+    assert.equal(cutout.rotation.y, authored.yaw);
+    assert.equal(cutout.position.x, authored.position[0]);
+    assert.equal(cutout.position.z, authored.position[2]);
+    assert.equal(runtime.collisionBounds, authored.collisionBounds);
+    assert.equal(runtime.collisionProxy.userData.bounds, authored.collisionBounds);
+    assert.deepEqual(runtime.collisionProxy.position.toArray(), [
+      (authored.collisionBounds[0] + authored.collisionBounds[3]) / 2,
+      (authored.collisionBounds[1] + authored.collisionBounds[4]) / 2,
+      (authored.collisionBounds[2] + authored.collisionBounds[5]) / 2,
+    ]);
   }
   for (const cutout of arena.foliageCutouts) {
     assert.equal(cutout.userData.fixedCrossedPlane, true);

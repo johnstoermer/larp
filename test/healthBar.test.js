@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { BotController } from '../src/game/BotController.js';
 import {
+  HEALTH_BAR_COLORS,
   HEALTH_BAR_STYLE,
   createHealthBarTexture,
   renderHealthBarPixels,
@@ -72,6 +73,28 @@ test('health progress texture updates in place with nearest-neighbor Win98 edges
   );
 });
 
+test('relationship colors update in place even when the health ratio is unchanged', () => {
+  const texture = createHealthBarTexture(0.72, HEALTH_BAR_COLORS.ally);
+  const fillX = HEALTH_BAR_STYLE.inset + 1;
+  const fillY = HEALTH_BAR_STYLE.inset + 1;
+
+  assert.equal(
+    pixelColor(texture.image.data, HEALTH_BAR_STYLE.width, fillX, fillY),
+    HEALTH_BAR_COLORS.ally,
+  );
+
+  const metrics = updateHealthBarTexture(
+    texture,
+    0.72,
+    HEALTH_BAR_COLORS.enemy,
+  );
+  assert.equal(metrics.fill, HEALTH_BAR_COLORS.enemy);
+  assert.equal(
+    pixelColor(texture.image.data, HEALTH_BAR_STYLE.width, fillX, fillY),
+    HEALTH_BAR_COLORS.enemy,
+  );
+});
+
 test('moving and turning a fighter preserves one stable health-bar sprite', () => {
   const bot = new BotController(new THREE.Scene(), {}, {});
   bot.health = 72;
@@ -87,6 +110,8 @@ test('moving and turning a fighter preserves one stable health-bar sprite', () =
   assert.equal(bar.children.length, 0);
   assert.equal(material.depthWrite, false);
   assert.equal(material.fog, false);
+  assert.equal(bar.userData.relationship, 'enemy');
+  assert.equal(texture.userData.fill, HEALTH_BAR_COLORS.enemy);
 
   for (let frame = 0; frame < 24; frame += 1) {
     bot.position.set(frame * 0.13, Math.sin(frame * 0.2) * 0.05, frame * -0.07);

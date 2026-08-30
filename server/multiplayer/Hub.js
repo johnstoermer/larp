@@ -7,6 +7,12 @@ import {
 } from './config.js';
 import { Room } from './Room.js';
 import { WarRoom } from './WarRoom.js';
+import {
+  WAR_MODE_CONTROL,
+  WAR_MODE_IDS,
+  WAR_RULES,
+  normalizeWarMode,
+} from '../../shared/warConfig.js';
 
 const ROOM_ALPHABET = '346789ABCDEFGHJKMNPQRTUVWXY';
 const MAX_MESSAGE_BYTES = 4096;
@@ -18,9 +24,10 @@ const MAX_ADMISSION_RECORDS = 2_048;
 const MAX_NEW_SESSIONS_PER_MINUTE = 40;
 const MAX_SESSION_RECORDS = 512;
 const MAX_ARENA_ROOMS = 40;
-const MAX_WAR_ROOMS = 1;
+const MAX_WAR_ROOMS_PER_MODE = 1;
+const MAX_WAR_ROOMS = MAX_WAR_ROOMS_PER_MODE * WAR_MODE_IDS.length;
 const IDLE_SESSION_TTL_MS = 30_000;
-const WAR_REJOIN_COOLDOWN_MS = 8_000;
+const WAR_REJOIN_COOLDOWN_MS = WAR_RULES.respawnMs;
 
 function allowedWebSocketOrigin(origin) {
   if (!origin) return true;
@@ -395,7 +402,12 @@ export class MultiplayerHub {
       return;
     }
     if (message.type === 'war_play') {
-      this.joinWar(session, message.classId, now);
+      this.joinWar(
+        session,
+        message.classId,
+        now,
+        message.warMode ?? message.variant ?? WAR_MODE_CONTROL,
+      );
       return;
     }
     if (message.type === 'create_private') {
@@ -466,7 +478,12 @@ export class MultiplayerHub {
     });
   }
 
-  joinWar(session, classId, now = Date.now()) {
+  joinWar(
+    session,
+    classId,
+    now = Date.now(),
+    requestedWarMode = WAR_MODE_CONTROL,
+  ) {
     if (session.room) return;
     this.removeFromQueues(session);
     if (!session.compression) {
@@ -485,14 +502,21 @@ export class MultiplayerHub {
       });
       return;
     }
+    const warMode = normalizeWarMode(requestedWarMode);
     let room = [...this.rooms].find(
-      (candidate) => candidate.mode === 'war' && candidate.canJoin(now),
+      (candidate) =>
+        candidate.mode === 'war' &&
+        candidate.warMode === warMode &&
+        candidate.canJoin(now),
     );
     if (!room) {
       const warRoomCount = [...this.rooms].filter(
-        (candidate) => candidate.mode === 'war' && candidate.phase !== 'result',
+        (candidate) =>
+          candidate.mode === 'war' &&
+          candidate.warMode === warMode &&
+          candidate.phase !== 'result',
       ).length;
-      if (warRoomCount >= MAX_WAR_ROOMS) {
+      if (warRoomCount >= MAX_WAR_ROOMS_PER_MODE) {
         this.send(session, {
           type: 'error',
           code: 'WAR_CAPACITY',
@@ -500,7 +524,7 @@ export class MultiplayerHub {
         });
         return;
       }
-      room = new WarRoom({ rules: this.warRules, now });
+      room = new WarRoom({ rules: this.warRules, now, warMode });
       this.rooms.add(room);
     }
     const player = room.addSession(session, classId, now);
@@ -695,6 +719,10 @@ export class MultiplayerHub {
       rooms: this.rooms.size,
       arenaRooms: arenaRooms.length,
       warRooms: warRooms.length,
+      warRoomsByMode: Object.fromEntries(WAR_MODE_IDS.map((warMode) => [
+        warMode,
+        warRooms.filter((room) => room.warMode === warMode).length,
+      ])),
       warHumans: warRooms.reduce(
         (total, room) => total + room.connectedHumans().length,
         0,
@@ -728,5 +756,6 @@ export {
   MAX_REALTIME_BUFFERED_BYTES,
   MAX_SESSION_RECORDS,
   MAX_WAR_ROOMS,
+  MAX_WAR_ROOMS_PER_MODE,
   allowedWebSocketOrigin,
 };

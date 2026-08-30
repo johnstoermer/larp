@@ -1,4 +1,9 @@
-export const PROTOCOL_VERSION = 5;
+import {
+  fixedPhotoPropCollisionBounds,
+  quantizeFixedPhotoPropYaw,
+} from '../../shared/warSceneryGeometry.js';
+
+export const PROTOCOL_VERSION = 6;
 export const SERVER_TICK_RATE = 30;
 export const SNAPSHOT_RATE = 30;
 
@@ -65,19 +70,57 @@ export const WEAPONS = Object.freeze({
 
 const PICKUP_POOL = ['shortbow', 'ember', 'crossbow', 'lightning', 'longbow', 'greatsword', 'fireball'];
 
-// Free-standing photographic props use these invisible physical footprints.
-// Their original cover boxes remain in MAPS below; these additional bounds
-// make the relocated objects solid for both authoritative movement and shots
-// without drawing another rectangular proxy in the client scene.
-export const BATTLE_VILLAGE_PROP_COLLIDERS = Object.freeze({
-  'central-wooden-cart': Object.freeze([-19.4, 0, 2.1, -14.6, 1.9, 3.9]),
-  'west-hay-bales': Object.freeze([-13.8, 0, 11.7, -9.2, 1.45, 13.3]),
-  'east-hay-bales': Object.freeze([9.2, 0, -13.3, 13.8, 1.45, -11.7]),
-  'red-flank-tent': Object.freeze([-13, 0, -14.3, -9, 2.35, -11.7]),
-  'blue-flank-tent': Object.freeze([9, 0, 11.7, 13, 2.35, 14.3]),
-  'west-archery-target': Object.freeze([-19.1, 0, 13.275, -16.9, 2.15, 13.725]),
-  'east-archery-target': Object.freeze([16.9, 0, -14.225, 19.1, 2.15, -13.775]),
+function fixedBattleVillageProp(position, width, height, collisionHeight, yaw) {
+  const fixedPosition = Object.freeze(position);
+  const fixedYaw = quantizeFixedPhotoPropYaw(yaw);
+  return Object.freeze({
+    position: fixedPosition,
+    width,
+    height,
+    collisionHeight,
+    yaw: fixedYaw,
+    collisionBounds: Object.freeze(fixedPhotoPropCollisionBounds(
+      fixedPosition,
+      width,
+      collisionHeight,
+      fixedYaw,
+    )),
+  });
+}
+
+// The client renders these as fixed, double-sided photo planes. Their server
+// colliders are the conservative world AABBs of the same yawed 8 cm planes,
+// rather than thick footprints shaped like imaginary 3D carts or tents.
+export const BATTLE_VILLAGE_PROP_PLANES = Object.freeze({
+  'central-wooden-cart': fixedBattleVillageProp(
+    [-17, 0, 3], 5.3, 3.55, 1.9, Math.PI * 0.04,
+  ),
+  'west-hay-bales': fixedBattleVillageProp(
+    [-11.5, 0, 12.5], 5.5, 2.2, 1.45, -Math.PI * 0.24,
+  ),
+  'east-hay-bales': fixedBattleVillageProp(
+    [11.5, 0, -12.5], 5.5, 2.2, 1.45, -Math.PI * 0.24,
+  ),
+  'red-flank-tent': fixedBattleVillageProp(
+    [-11, 0, -13], 4.8, 3.2, 2.35, Math.PI * 0.22,
+  ),
+  'blue-flank-tent': fixedBattleVillageProp(
+    [11, 0, 13], 4.8, 3.2, 2.35, Math.PI * 0.22,
+  ),
+  'west-archery-target': fixedBattleVillageProp(
+    [-18, 0, 13.5], 2.4, 2.85, 2.15, Math.PI / 2,
+  ),
+  'east-archery-target': fixedBattleVillageProp(
+    [18, 0, -14], 2.4, 2.85, 2.15, Math.PI / 2,
+  ),
 });
+
+export const BATTLE_VILLAGE_PROP_COLLIDERS = Object.freeze(Object.fromEntries(
+  Object.entries(BATTLE_VILLAGE_PROP_PLANES).map(([name, prop]) => [
+    name,
+    prop.collisionBounds,
+  ]),
+));
 
 // One compact, mirrored two-home arena. Three lanes, short spawn-to-action time,
 // readable landmark cover, and equivalent routes for both sides follow the

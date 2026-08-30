@@ -145,7 +145,17 @@ try {
       type: record.sprite.type,
       position: record.sprite.position.toArray(),
       scale: record.sprite.scale.toArray(),
-      center: record.sprite.center.toArray(),
+      yaw: record.sprite.rotation.y,
+      fixedPhotoProp: record.sprite.userData.fixedPhotoProp,
+      fixedYaw: record.sprite.userData.fixedYaw,
+      doubleSided: record.sprite.material.side === 2,
+      planeSize: [
+        record.sprite.geometry.parameters.width,
+        record.sprite.geometry.parameters.height,
+      ],
+      visibleBottom: record.sprite.position.y
+        - record.height / 2
+        + record.visibleBottomRatio * record.height,
       source: record.sprite.material.map?.image?.currentSrc || '',
       collisionBounds: [...record.collisionBounds],
       collisionProxy: {
@@ -161,8 +171,12 @@ try {
   });
 
   for (const prop of geometry) {
-    assert(prop.type === 'Sprite', `${prop.name}: photo can disappear edge-on`);
-    assert(prop.position[1] === 0.02, `${prop.name}: ground anchor floats`);
+    assert(prop.type === 'Mesh', `${prop.name}: photo is not a fixed plane mesh`);
+    assert(prop.fixedPhotoProp === true, `${prop.name}: photo can follow the camera`);
+    assert(prop.fixedYaw === prop.yaw, `${prop.name}: authored yaw is not retained`);
+    assert(prop.doubleSided === true, `${prop.name}: fixed plane disappears from its back side`);
+    assert(prop.planeSize.every((size) => size > 0), `${prop.name}: invalid plane dimensions`);
+    assert(Math.abs(prop.visibleBottom - 0.02) < 1e-8, `${prop.name}: ground anchor floats`);
     assert(prop.collisionProxy.colorWrite === false, `${prop.name}: proxy writes color`);
     assert(prop.collisionProxy.opacity === 0, `${prop.name}: proxy is visible`);
     assert(prop.collisionProxy.depthWrite === false, `${prop.name}: proxy writes depth`);
@@ -182,12 +196,15 @@ try {
 
     return arena.photoProps.map((record) => {
       const sprite = record.sprite;
-      const targetY = Math.min(1.45, sprite.scale.y * (1 - sprite.center.y) * 0.5);
+      const targetY = Math.min(1.45, Math.max(0.7, sprite.position.y));
       const target = [sprite.position.x, targetY, sprite.position.z];
       const candidates = [];
       for (const radius of [6, 5, 4, 3.25]) {
         for (let step = 0; step < 32; step += 1) {
           const angle = step / 32 * Math.PI * 2;
+          // Only photograph the authored front/back faces, not a deliberately
+          // edge-on view of the fixed plane.
+          if (Math.abs(Math.sin(angle + record.yaw)) < 0.72) continue;
           const x = sprite.position.x + Math.cos(angle) * radius;
           const z = sprite.position.z + Math.sin(angle) * radius;
           if (x < -20.9 || x > 20.9 || z < -16.9 || z > 16.9) continue;

@@ -4,10 +4,14 @@ import {
   WAR_CLASS_IDS,
   WAR_COMBATANT_COUNT,
   WAR_MAP,
+  WAR_MODES,
+  WAR_MODE_CONTROL,
+  WAR_MODE_TEAM_DEATHMATCH,
   WAR_RULES,
   WAR_TEAM_COUNT,
   WAR_TEAM_SIZE,
   normalizeWarClass,
+  normalizeWarMode,
   warSpawnForSlot,
   warSpawnYaw,
 } from '../../shared/warConfig.js';
@@ -188,6 +192,8 @@ function createCombatant(globalSlot, now, seed) {
     botMeleeAccuracy: 0.62 + hashUnit(seed, teamSlot, 0, 18) * 0.12,
     kills: 0,
     deaths: 0,
+    assists: 0,
+    damageContributors: new Map(),
     ready: true,
   };
 }
@@ -213,15 +219,21 @@ export class WarRoom {
     now = Date.now(),
     seed = (Math.floor(Math.random() * 0xffffffff) ^ now) >>> 0,
     teamSideSwap = null,
+    warMode = WAR_MODE_CONTROL,
   } = {}) {
     if (!Array.isArray(sessions) || sessions.length > WAR_COMBATANT_COUNT) {
       throw new Error(`A War room accepts at most ${WAR_COMBATANT_COUNT} sessions.`);
     }
     this.id = randomUUID();
     this.mode = 'war';
+    this.warMode = normalizeWarMode(warMode);
     this.code = null;
     this.privateMatch = false;
-    this.rules = Object.freeze({ ...WAR_RULES, ...rules });
+    this.rules = Object.freeze({
+      ...WAR_RULES,
+      scoreToWin: WAR_MODES[this.warMode].scoreToWin,
+      ...rules,
+    });
     this.seed = seed >>> 0;
     // The authored north and south approaches are intentionally different.
     // Alternate which logical team receives each physical side so neither team
@@ -232,7 +244,7 @@ export class WarRoom {
     this.createdAt = now;
     this.updatedAt = now;
     this.destroyAt = Infinity;
-    this.phase = 'locked';
+    this.phase = this.warMode === WAR_MODE_CONTROL ? 'locked' : 'combat';
     this.winner = null;
     this.resultReason = null;
     this.matchEndSent = false;
@@ -252,7 +264,11 @@ export class WarRoom {
     this.nextProjectileId = 1;
     this.pendingBotDamage = null;
     this.pendingBotAttacks = null;
-    this.control = new WarControl({ now, rules: this.rules });
+    this.deferTeamDeathmatchEnd = false;
+    this.teamScores = [0, 0];
+    this.control = this.warMode === WAR_MODE_CONTROL
+      ? new WarControl({ now, rules: this.rules })
+      : null;
 
     sessions.forEach((entry, index) => {
       const normalized = sessionEntry(entry);
@@ -267,10 +283,13 @@ export class WarRoom {
   battlePocket(pairIndex) {
     const column = pairIndex % 5;
     const row = Math.floor(pairIndex / 5);
+    const rowCount = Math.max(1, Math.ceil((WAR_TEAM_SIZE / 2) / 5));
     const separation = 1.05 + hashUnit(this.seed, pairIndex, 0, 35) * 0.52;
     const preferredX = -76 + column * 38 +
       (hashUnit(this.seed, pairIndex, 0, 36) - 0.5) * 15;
-    const preferredZ = 15 + row * 17.5 +
+    const preferredZ = 15 + (
+      rowCount <= 1 ? 0 : row / (rowCount - 1) * 52.5
+    ) +
       (hashUnit(this.seed, pairIndex, 0, 37) - 0.5) * 9;
     const candidateIsClear = (x, z) => [
       [x - separation, WAR_FLOOR_Y, z],
@@ -433,6 +452,21 @@ export class WarRoom {
     return 1 - first;
   }
 
+  resetCombatantIdentity(player) {
+    player.kills = 0;
+    player.deaths = 0;
+    player.assists = 0;
+    player.rtt = 0;
+    player.focused = false;
+    player.damageContributors.clear();
+    for (const target of this.players) {
+      target.damageContributors.delete(player.slot);
+    }
+    this.projectiles = this.projectiles.filter(
+      (projectile) => projectile.owner !== player.slot,
+    );
+  }
+
   addSession(session, requestedClass, now = Date.now()) {
     if (!session || this.phase === 'result') return null;
     const existing = this.playerForSession(session);
@@ -441,6 +475,10 @@ export class WarRoom {
     const player = this.eligibleBotForTeam(team, now);
     if (!player) return null;
 
+    // Scoreboard stats and assist credit belong to the identity controlling a
+    // slot, not to the replaceable bot body. Same-token reconnects return via
+    // the existing-player branch above and intentionally retain this state.
+    this.resetCombatantIdentity(player);
     player.session = session;
     player.token = session.token ?? null;
     player.name = String(session.name ?? 'Player').slice(0, 18);
@@ -526,6 +564,7 @@ export class WarRoom {
     player.health = player.dead
       ? 0
       : clamp(definition.health * healthRatio, 1, definition.health);
+    if (!preserveHealth) player.damageContributors?.clear();
   }
 
   handleSelectClass(session, message, now = Date.now()) {
@@ -568,6 +607,7 @@ export class WarRoom {
       type: 'war_found',
       roomId: this.id,
       mode: this.mode,
+      warMode: this.warMode,
       slot: player.slot,
       team: player.team,
       teamSlot: player.teamSlot,
@@ -581,6 +621,7 @@ export class WarRoom {
         captureMs: this.rules.captureMs,
         scoreToWin: this.rules.scoreToWin,
         respawnMs: this.rules.respawnMs,
+        assistWindowMs: this.rules.assistWindowMs,
       },
       snapshot: this.snapshot(now),
     });
@@ -604,7 +645,7 @@ export class WarRoom {
   }
 
   requestRematch() {
-    // A completed War room is replaced instead of resetting its 80 stable slots.
+    // A completed War room is replaced instead of resetting its stable slots.
   }
 
   integrateKnockback(player, deltaSeconds) {
@@ -1352,6 +1393,78 @@ export class WarRoom {
     };
   }
 
+  recordDamageContribution(target, attacker, damage, now) {
+    if (
+      !attacker ||
+      attacker === target ||
+      attacker.team === target.team ||
+      damage <= 0
+    ) return;
+    const previous = target.damageContributors.get(attacker.slot);
+    target.damageContributors.set(attacker.slot, {
+      at: now,
+      damage: (previous?.damage ?? 0) + damage,
+    });
+  }
+
+  awardAssists(target, killer, now) {
+    const assistingSlots = [];
+    for (const [slot, contribution] of target.damageContributors) {
+      const contributor = this.players[slot];
+      if (
+        slot === killer?.slot ||
+        !contributor ||
+        contributor.team === target.team ||
+        now - contribution.at > this.rules.assistWindowMs
+      ) continue;
+      contributor.assists += 1;
+      assistingSlots.push(slot);
+    }
+    target.damageContributors.clear();
+    return assistingSlots.sort((first, second) => first - second);
+  }
+
+  finishTeamDeathmatch(winner, now) {
+    if (
+      this.warMode !== WAR_MODE_TEAM_DEATHMATCH ||
+      this.matchEndSent ||
+      winner == null
+    ) return false;
+    this.phase = 'result';
+    this.winner = winner;
+    this.resultReason = 'kills';
+    this.matchEndSent = true;
+    this.destroyAt = now + this.rules.destroyAfterMs;
+    this.broadcast({
+      type: 'war_event',
+      event: 'match_end',
+      warMode: this.warMode,
+      winner,
+      reason: this.resultReason,
+      scores: [...this.teamScores],
+    });
+    this.broadcastSnapshot(now);
+    return true;
+  }
+
+  maybeFinishTeamDeathmatch(now) {
+    if (
+      this.warMode !== WAR_MODE_TEAM_DEATHMATCH ||
+      this.matchEndSent
+    ) return false;
+    const contenders = [0, 1].filter(
+      (team) => this.teamScores[team] >= this.rules.scoreToWin,
+    );
+    if (!contenders.length) return false;
+    const winner = contenders.length === 1
+      ? contenders[0]
+      : (
+        (hashUnit(this.seed, this.botTick, 0, 97) < 0.5 ? 0 : 1) ^
+        this.teamSideSwap
+      );
+    return this.finishTeamDeathmatch(winner, now);
+  }
+
   applyDamage(target, requestedDamage, attacker, now) {
     if (
       !target ||
@@ -1377,6 +1490,7 @@ export class WarRoom {
       return damage;
     }
     target.health = Math.max(0, target.health - damage);
+    this.recordDamageContribution(target, attacker, damage, now);
     if (target.health > 0) return damage;
 
     target.dead = true;
@@ -1388,14 +1502,36 @@ export class WarRoom {
     target.knockbackVelocity = [0, 0, 0];
     target.lastPhysicsAt = now;
     target.deaths += 1;
-    if (attacker) attacker.kills += 1;
+    const enemyKill = Boolean(
+      attacker && attacker !== target && attacker.team !== target.team,
+    );
+    if (enemyKill) attacker.kills += 1;
+    const assists = this.awardAssists(target, enemyKill ? attacker : null, now);
+    let reachedTeamDeathmatchLimit = false;
+    if (enemyKill && this.warMode === WAR_MODE_TEAM_DEATHMATCH) {
+      this.teamScores[attacker.team] = Math.min(
+        this.rules.scoreToWin,
+        this.teamScores[attacker.team] + 1,
+      );
+      if (this.teamScores[attacker.team] >= this.rules.scoreToWin) {
+        reachedTeamDeathmatchLimit = true;
+      }
+    }
     this.broadcast({
       type: 'war_event',
       event: 'death',
+      warMode: this.warMode,
       player: target.slot,
-      attacker: attacker?.slot ?? null,
+      attacker: enemyKill ? attacker.slot : null,
+      assists,
+      scores: this.warMode === WAR_MODE_TEAM_DEATHMATCH
+        ? [...this.teamScores]
+        : undefined,
       respawnMs: this.rules.respawnMs,
     });
+    if (reachedTeamDeathmatchLimit && !this.deferTeamDeathmatchEnd) {
+      this.maybeFinishTeamDeathmatch(now);
+    }
     return damage;
   }
 
@@ -1430,6 +1566,7 @@ export class WarRoom {
     player.dead = false;
     player.deathAt = Infinity;
     player.respawnAt = Infinity;
+    player.damageContributors.clear();
     player.lastStateAt = now;
     player.lastPhysicsAt = now;
     player.movementCredit = MAX_MOVEMENT_CREDIT;
@@ -2017,6 +2154,7 @@ export class WarRoom {
     }
     this.pendingBotDamage = [];
     this.pendingBotAttacks = [];
+    this.deferTeamDeathmatchEnd = this.warMode === WAR_MODE_TEAM_DEATHMATCH;
     for (const player of this.players) {
       if (!player.bot || player.dead) continue;
       this.updateBotAttack(player, now);
@@ -2045,7 +2183,12 @@ export class WarRoom {
       );
     }
     this.updateProjectiles(now);
+    this.deferTeamDeathmatchEnd = false;
+    if (this.warMode === WAR_MODE_TEAM_DEATHMATCH) {
+      this.maybeFinishTeamDeathmatch(now);
+    }
 
+    if (this.warMode !== WAR_MODE_CONTROL || this.phase === 'result') return;
     const occupancy = this.objectiveOccupancy();
     const control = this.control.update(now, occupancy);
     this.phase = control.phase;
@@ -2057,6 +2200,7 @@ export class WarRoom {
       this.broadcast({
         type: 'war_event',
         event: 'match_end',
+        warMode: this.warMode,
         winner: control.winner,
         reason: this.resultReason,
         scores: control.scores,
@@ -2149,15 +2293,22 @@ export class WarRoom {
   }
 
   snapshot(now = Date.now()) {
-    const occupancy = this.objectiveOccupancy();
-    const control = this.control.snapshot(now, occupancy);
+    const control = this.control
+      ? this.control.snapshot(now, this.objectiveOccupancy())
+      : null;
+    const teamScores = control
+      ? control.scores
+      : this.teamScores.map((score) => Math.round(score));
     return {
       serverTime: now,
       mode: this.mode,
+      warMode: this.warMode,
       mapId: WAR_MAP.id,
       seed: this.seed,
       phase: this.phase,
       control,
+      teamScores,
+      scoreToWin: this.rules.scoreToWin,
       combatants: this.players.map((player) => ({
         id: player.id,
         team: player.team,
@@ -2179,6 +2330,9 @@ export class WarRoom {
           : Math.max(0, Math.round(player.reloadEndsAt - now)),
         dead: player.dead,
         respawnRemaining: player.dead ? Math.max(0, Math.round(player.respawnAt - now)) : 0,
+        kills: player.kills,
+        deaths: player.deaths,
+        assists: player.assists,
         attackSequence: player.attackSequence,
         ack: player.human ? player.lastSequence : 0,
         shotAck: player.human ? player.lastShotId : 0,
@@ -2244,6 +2398,7 @@ export class WarRoom {
       code: this.code,
       privateMatch: this.privateMatch,
       mode: this.mode,
+      warMode: this.warMode,
       phase: this.phase,
       ageSeconds: Math.round((Date.now() - this.createdAt) / 1_000),
       connectedPlayers,

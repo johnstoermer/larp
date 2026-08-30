@@ -1,10 +1,14 @@
 import { writeFile } from 'node:fs/promises';
 import WebSocket from 'ws';
 import { PROTOCOL_VERSION } from '../server/multiplayer/config.js';
+import {
+  WAR_COMBATANT_COUNT,
+  WAR_TEAM_SIZE,
+} from '../shared/warConfig.js';
 
 const baseUrl = process.env.LARP_URL || 'http://127.0.0.1:8080';
 const durationMs = Number(process.env.LARP_WAR_LOAD_DURATION || 4_000);
-const clientCount = 80;
+const clientCount = WAR_COMBATANT_COUNT;
 const classIds = [
   'knives',
   'shortbow',
@@ -156,6 +160,7 @@ clearInterval(shotTimer);
 
 const status = await fetch(new URL('/api/status', baseUrl)).then((response) => response.json());
 const representative = clients.find((client) => client.latestSnapshot)?.latestSnapshot;
+const testedWarMode = representative?.warMode ?? 'control';
 const teamCounts = [0, 1].map(
   (team) => representative?.combatants?.filter((combatant) => combatant.team === team).length ?? 0,
 );
@@ -171,6 +176,7 @@ const wireBytes = clients.map((client) =>
   Math.max(0, (client.socket._socket?.bytesRead ?? 0) - client.wireBytesStart));
 const report = {
   baseUrl,
+  testedWarMode,
   clientCount,
   durationMs,
   elapsedMs: Math.round(performance.now() - startedAt),
@@ -216,14 +222,21 @@ while (clients.some((client) => !client.left) && Date.now() < leaveDeadline) {
 for (const client of clients) client.socket.close(1000, 'WAR_LOAD_COMPLETE');
 
 if (report.roomCount !== 1) throw new Error(`Expected one War room, found ${report.roomCount}.`);
-if (teamCounts[0] !== 40 || teamCounts[1] !== 40) {
+if (teamCounts[0] !== WAR_TEAM_SIZE || teamCounts[1] !== WAR_TEAM_SIZE) {
   throw new Error(`War team allocation regressed: ${JSON.stringify(teamCounts)}.`);
 }
-if (humanCount !== 80 || status.warHumans !== 80 || status.warRooms !== 1) {
-  throw new Error(`War did not retain 80 live humans: ${JSON.stringify({ humanCount, status })}.`);
+if (
+  humanCount !== WAR_COMBATANT_COUNT ||
+  status.warHumans !== WAR_COMBATANT_COUNT ||
+  status.warRoomsByMode?.[testedWarMode] !== 1 ||
+  status.warRooms > 2
+) {
+  throw new Error(
+    `War did not retain ${WAR_COMBATANT_COUNT} live humans: ${JSON.stringify({ humanCount, status })}.`,
+  );
 }
 for (const classId of classIds) {
-  if (selectedClassCounts[classId] !== 10) {
+  if (selectedClassCounts[classId] !== WAR_COMBATANT_COUNT / classIds.length) {
     throw new Error(`War class allocation regressed: ${JSON.stringify(selectedClassCounts)}.`);
   }
 }

@@ -57,8 +57,8 @@ function socket(readyState = 1, extensions = 'permessage-deflate') {
   };
 }
 
-test('client and server advertise the same War geometry protocol', () => {
-  assert.equal(PROTOCOL_VERSION, 5);
+test('client and server advertise the same multiplayer protocol', () => {
+  assert.equal(PROTOCOL_VERSION, 6);
   assert.equal(CLIENT_PROTOCOL_VERSION, PROTOCOL_VERSION);
 });
 
@@ -350,7 +350,7 @@ test('starting a new queue during leave acknowledgement keeps the socket alive',
 
   assert.deepEqual(sent, [
     { type: 'leave' },
-    { type: 'war_play', classId: 'greatsword' },
+    { type: 'war_play', classId: 'greatsword', warMode: 'control' },
   ]);
   assert.equal(closes, 0);
   assert.equal(client.pendingLeave, false);

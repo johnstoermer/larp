@@ -55,12 +55,12 @@ function disableAllExcept(room, slots) {
   }
 }
 
-test('War always contains two balanced teams of 40 and humans replace bot slots', () => {
+test('War always contains two balanced teams of 20 and humans replace bot slots', () => {
   const room = new WarRoom({ now: 1_000, seed: 71 });
   assert.equal(room.players.length, WAR_COMBATANT_COUNT);
   assert.equal(room.players.filter((player) => player.team === 0).length, WAR_TEAM_SIZE);
   assert.equal(room.players.filter((player) => player.team === 1).length, WAR_TEAM_SIZE);
-  assert.equal(room.players.filter((player) => player.bot).length, 80);
+  assert.equal(room.players.filter((player) => player.bot).length, WAR_COMBATANT_COUNT);
   assert.deepEqual(
     room.players.slice(0, WAR_CLASS_IDS.length).map((player) => player.classId),
     WAR_CLASS_IDS,
@@ -76,7 +76,10 @@ test('War always contains two balanced teams of 40 and humans replace bot slots'
   });
 
   assert.deepEqual(room.getSummary().teamHumans, [4, 3]);
-  assert.equal(room.players.filter((player) => player.bot).length, 73);
+  assert.equal(
+    room.players.filter((player) => player.bot).length,
+    WAR_COMBATANT_COUNT - sessions.length,
+  );
   assert.equal(room.players.filter((player) => player.human).length, 7);
   assert.ok(sessions.every((session) =>
     session.messages.some((message) => message.type === 'war_found')
@@ -109,7 +112,50 @@ test('a joining human takes over a live skirmish instead of an empty spawn line'
   assert.equal(player.health, protectedHealth - 50);
 });
 
-test('all 80 human slots fill without unbalancing either team', () => {
+test('a new human starts with clean K/D/A and no prior-slot assist credit', () => {
+  const room = new WarRoom({ now: 1_300, seed: 0x1d3 });
+  const priorBot = room.players[0];
+  const teammate = room.players[1];
+  const enemy = room.players[WAR_TEAM_SIZE];
+  room.setClass(priorBot, 'fireball', false);
+  priorBot.kills = 7;
+  priorBot.deaths = 4;
+  priorBot.assists = 3;
+  priorBot.rtt = 240;
+  priorBot.focused = true;
+  room.applyDamage(enemy, 10, priorBot, 1_310);
+  room.applyDamage(priorBot, 10, enemy, 1_320);
+  room.performRangedAttack(priorBot, [1, 0, 0], 1_325);
+  assert.equal(enemy.damageContributors.has(priorBot.slot), true);
+  assert.equal(priorBot.damageContributors.has(enemy.slot), true);
+  assert.equal(
+    room.projectiles.some(({ owner }) => owner === priorBot.slot),
+    true,
+  );
+
+  const session = createSession('Fresh Identity');
+  const player = room.addSession(session, 'shortbow', 1_330);
+
+  assert.equal(player, priorBot);
+  assert.deepEqual(
+    [player.kills, player.deaths, player.assists],
+    [0, 0, 0],
+  );
+  assert.equal(player.rtt, 0);
+  assert.equal(player.focused, false);
+  assert.equal(player.damageContributors.size, 0);
+  assert.equal(enemy.damageContributors.has(player.slot), false);
+  assert.equal(
+    room.projectiles.some(({ owner }) => owner === player.slot),
+    false,
+  );
+
+  enemy.health = 1;
+  room.applyDamage(enemy, 1, teammate, 1_340);
+  assert.equal(player.assists, 0);
+});
+
+test('all 40 human slots fill without unbalancing either team', () => {
   const room = new WarRoom({ now: 1_500, seed: 72 });
   const sessions = Array.from(
     { length: WAR_COMBATANT_COUNT },
@@ -143,6 +189,11 @@ test('disconnect hands a stable slot to a bot and reconnect reclaims it', () => 
   const originalSlot = player.slot;
   player.lastSequence = 47;
   player.lastShotId = 9;
+  player.kills = 6;
+  player.deaths = 2;
+  player.assists = 4;
+  const target = room.players[WAR_TEAM_SIZE];
+  room.applyDamage(target, 5, player, 2_050);
   assert.equal(room.disconnect(session, 2_100), true);
   assert.equal(player.bot, true);
   assert.equal(player.human, false);
@@ -155,6 +206,11 @@ test('disconnect hands a stable slot to a bot and reconnect reclaims it', () => 
   assert.equal(player.bot, false);
   assert.equal(player.human, true);
   assert.equal(player.name, 'Returned');
+  assert.deepEqual(
+    [player.kills, player.deaths, player.assists],
+    [6, 2, 4],
+  );
+  assert.equal(target.damageContributors.has(player.slot), true);
   assert.equal(session.messages.at(-1).type, 'war_found');
   assert.equal(session.messages.at(-1).resumed, true);
   const resumeSnapshot = session.messages.at(-1).snapshot;
@@ -225,6 +281,7 @@ test('fixed 10 Hz bots produce the same state for the same seed', () => {
       reloadEndsAt: player.reloadEndsAt,
       kills: player.kills,
       deaths: player.deaths,
+      assists: player.assists,
     })),
     projectiles: room.projectiles,
   });
@@ -289,10 +346,22 @@ test('War loads into scattered mirrored skirmishes already moving, wounded, and 
   const xCoordinates = room.players.map((player) => player.position[0]);
   const zCoordinates = room.players.map((player) => player.position[2]);
 
-  assert.ok(moving.length >= 72, `${moving.length} bots moving at load`);
-  assert.ok(airborne.length >= 16, `${airborne.length} bots airborne at load`);
-  assert.ok(wounded.length >= 32, `${wounded.length} bots carry battle damage`);
-  assert.ok(currentlyDodging.length >= 20, `${currentlyDodging.length} bots mid-dodge`);
+  assert.ok(
+    moving.length >= Math.ceil(WAR_COMBATANT_COUNT * 0.9),
+    `${moving.length} bots moving at load`,
+  );
+  assert.ok(
+    airborne.length >= Math.ceil(WAR_COMBATANT_COUNT * 0.2),
+    `${airborne.length} bots airborne at load`,
+  );
+  assert.ok(
+    wounded.length >= Math.ceil(WAR_COMBATANT_COUNT * 0.4),
+    `${wounded.length} bots carry battle damage`,
+  );
+  assert.ok(
+    currentlyDodging.length >= Math.ceil(WAR_COMBATANT_COUNT * 0.25),
+    `${currentlyDodging.length} bots mid-dodge`,
+  );
   assert.ok(Math.max(...xCoordinates) - Math.min(...xCoordinates) > 130);
   assert.ok(Math.max(...zCoordinates) - Math.min(...zCoordinates) > 110);
   assert.ok(room.players.every((player) => player.attackSequence > 0));
@@ -385,9 +454,18 @@ test('bots repeatedly jump and dodge during a live battle', () => {
     total + player.botJumpCount, 0);
   const dodges = room.players.reduce((total, player) =>
     total + player.botDodgeCount, 0);
-  assert.ok(jumps - startingJumps >= 30, `${jumps - startingJumps} new jumps`);
-  assert.ok(dodges - startingDodges >= 50, `${dodges - startingDodges} new dodges`);
-  assert.ok(maximumAirborne >= 20, `${maximumAirborne} simultaneously airborne`);
+  assert.ok(
+    jumps - startingJumps >= Math.ceil(WAR_COMBATANT_COUNT * 0.375),
+    `${jumps - startingJumps} new jumps`,
+  );
+  assert.ok(
+    dodges - startingDodges >= Math.ceil(WAR_COMBATANT_COUNT * 0.625),
+    `${dodges - startingDodges} new dodges`,
+  );
+  assert.ok(
+    maximumAirborne >= Math.ceil(WAR_COMBATANT_COUNT * 0.25),
+    `${maximumAirborne} simultaneously airborne`,
+  );
 });
 
 test('AABB navigation routes around cover and bots do not stall against its face', () => {
@@ -480,7 +558,7 @@ test('navigation edges cannot tunnel across a thin prop between grid centers', (
   }
 });
 
-test('all 80 bots recover without a one-second wall scrape in the long busy-map seed', () => {
+test('all 40 bots recover without a one-second wall scrape in the long busy-map seed', () => {
   const start = 100_000;
   const room = new WarRoom({
     now: start,
@@ -1086,7 +1164,7 @@ test('malformed War shot directions are rejected without throwing', () => {
   assert.equal(shooter.ammo, startingAmmo);
 });
 
-test('server-authoritative attacks damage, kill, change class, and respawn after 8 seconds', () => {
+test('server-authoritative attacks damage, kill, change class, and respawn after 5 seconds', () => {
   const attackerSession = createSession('Attacker');
   const targetSession = createSession('Target');
   const room = new WarRoom({
@@ -1112,7 +1190,7 @@ test('server-authoritative attacks damage, kill, change class, and respawn after
   }, 20_100), true);
   assert.equal(target.health, 0);
   assert.equal(target.dead, true);
-  assert.equal(target.respawnAt, 28_100);
+  assert.equal(target.respawnAt, 25_100);
   assert.equal(attacker.kills, 1);
   assert.equal(target.deaths, 1);
   assert.equal(attacker.ammo, 0);
@@ -1121,9 +1199,9 @@ test('server-authoritative attacks damage, kill, change class, and respawn after
 
   assert.equal(room.handleSelectClass(targetSession, { classId: 'greatsword' }, 20_200), true);
   room.nextBotAt = Infinity;
-  room.update(28_099);
+  room.update(25_099);
   assert.equal(target.dead, true);
-  room.update(28_100);
+  room.update(25_100);
   assert.equal(target.dead, false);
   assert.equal(target.classId, 'greatsword');
   assert.equal(target.health, WAR_CLASSES.greatsword.health);
@@ -1608,7 +1686,7 @@ test('snapshot is client-friendly, pickup-free, shared once, and stays within bu
     seed: 10,
   });
   const snapshot = room.snapshot(50_000);
-  assert.equal(snapshot.combatants.length, 80);
+  assert.equal(snapshot.combatants.length, WAR_COMBATANT_COUNT);
   assert.deepEqual(snapshot.pickups, []);
   assert.equal(snapshot.combatants[0].ammo, WAR_CLASSES.lightning.ammo);
   assert.equal(snapshot.combatants[0].reserve, WAR_CLASSES.lightning.reserve);
@@ -1620,7 +1698,8 @@ test('snapshot is client-friendly, pickup-free, shared once, and stays within bu
     'id', 'team', 'human', 'name', 'classId',
     'position', 'velocity', 'yaw', 'pitch', 'health', 'maxHealth',
     'ammo', 'reserve', 'usesAmmo', 'reloading', 'reloadRemaining',
-    'dead', 'respawnRemaining', 'attackSequence', 'ack', 'shotAck',
+    'dead', 'respawnRemaining', 'kills', 'deaths', 'assists',
+    'attackSequence', 'ack', 'shotAck',
   ]) {
     assert.ok(field in snapshot.combatants[0], field);
   }
@@ -1632,7 +1711,7 @@ test('snapshot is client-friendly, pickup-free, shared once, and stays within bu
     roomId: room.id,
     state: snapshot,
   }));
-  assert.ok(byteLength < 28 * 1_024, `${byteLength} byte snapshot`);
+  assert.ok(byteLength < 20 * 1_024, `${byteLength} byte snapshot`);
 
   first.encoded.length = 0;
   second.encoded.length = 0;
@@ -1643,13 +1722,13 @@ test('snapshot is client-friendly, pickup-free, shared once, and stays within bu
   assert.deepEqual(first.encoded[0].options, { volatile: true });
 });
 
-test('80-agent fixed-tick simulation and snapshot encoding stay inside server budgets', () => {
+test('40-agent fixed-tick simulation and snapshot encoding stay inside server budgets', () => {
   const room = new WarRoom({ now: 60_000, seed: 12, rules: { unlockMs: 0 } });
   const startedAt = performance.now();
   for (let tick = 1; tick <= 300; tick += 1) room.update(60_000 + tick * 100);
   const simulationMs = performance.now() - startedAt;
   assert.ok(simulationMs < 1_500, `${simulationMs.toFixed(1)} ms for 300 ticks`);
-  assert.equal(room.players.length, 80);
+  assert.equal(room.players.length, WAR_COMBATANT_COUNT);
 
   const snapshotStartedAt = performance.now();
   let totalBytes = 0;
@@ -1658,5 +1737,5 @@ test('80-agent fixed-tick simulation and snapshot encoding stay inside server bu
   }
   const snapshotMs = performance.now() - snapshotStartedAt;
   assert.ok(snapshotMs < 1_000, `${snapshotMs.toFixed(1)} ms for 100 snapshots`);
-  assert.ok(totalBytes / 100 < 28 * 1_024);
+  assert.ok(totalBytes / 100 < 20 * 1_024);
 });

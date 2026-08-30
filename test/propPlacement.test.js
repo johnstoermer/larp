@@ -3,8 +3,15 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import {
   BATTLE_VILLAGE_PROP_COLLIDERS,
+  BATTLE_VILLAGE_PROP_PLANES,
   MAPS as NETWORK_MAPS,
 } from '../server/multiplayer/config.js';
+import {
+  FIXED_PHOTO_PROP_PLANE_DEPTH,
+  fixedPhotoPropCollisionBounds,
+  quantizeFixedPhotoPropYaw,
+  rotatedFootprintExtents,
+} from '../shared/warSceneryGeometry.js';
 import {
   bodyIntersectsWorld,
   firstWorldHit,
@@ -70,6 +77,32 @@ test('all seven photos keep their old visible covers and receive distinct author
       BATTLE_VILLAGE_PROP_COLLIDERS[prop.name],
       `${prop.name}: wrong authoritative prop hitbox`,
     );
+    assert.deepEqual(
+      prop.collisionBounds,
+      fixedPhotoPropCollisionBounds(
+        prop.position,
+        prop.width,
+        prop.collisionHeight,
+        prop.yaw,
+      ),
+      `${prop.name}: collider does not enclose its yawed thin photo plane`,
+    );
+    assert.equal(prop.position, BATTLE_VILLAGE_PROP_PLANES[prop.name].position);
+    assert.equal(prop.yaw, quantizeFixedPhotoPropYaw(prop.yaw));
+    const [expectedX, expectedZ] = rotatedFootprintExtents(
+      prop.width,
+      FIXED_PHOTO_PROP_PLANE_DEPTH,
+      prop.yaw,
+    );
+    assert.ok(Math.abs(prop.collisionBounds[3] - prop.collisionBounds[0] - expectedX) < 1e-10);
+    assert.ok(Math.abs(prop.collisionBounds[5] - prop.collisionBounds[2] - expectedZ) < 1e-10);
+    assert.ok(
+      Math.min(
+        prop.collisionBounds[3] - prop.collisionBounds[0],
+        prop.collisionBounds[5] - prop.collisionBounds[2],
+      ) <= 0.081,
+      `${prop.name}: fixed photo wall is thicker than 8.1 cm`,
+    );
     assert.ok(
       networkBounds.has(JSON.stringify(prop.coverBounds)),
       `${prop.name}: original visible cover moved or disappeared`,
@@ -88,7 +121,7 @@ test('all seven photos keep their old visible covers and receive distinct author
   }
 });
 
-test('every billboard and hitbox has positive clearance from every visible cover and title actor', () => {
+test('every fixed photo plane and hitbox clears visible cover and the title actor', () => {
   for (const prop of PHOTO_PROP_LAYOUTS) {
     for (const [coverIndex, coverBounds] of VISIBLE_COVER_BOUNDS.entries()) {
       const visualGap = photoPropClearanceFromBounds(prop, coverBounds);
@@ -161,14 +194,14 @@ test('prop hitboxes leave every spawn, pickup and bot navigation node clear', ()
   }
 });
 
-test('Arena keeps fixed world coordinates while Sprite billboarding stays legible from either side', () => {
+test('Arena photo planes keep their authored position and yaw when cameras move', () => {
   const arena = new Arena(new THREE.Scene(), {});
   assert.equal(arena.photoProps.length, PHOTO_PROP_LAYOUTS.length);
 
   const initial = arena.photoProps.map(({ sprite }) => ({
     position: sprite.position.clone(),
     scale: sprite.scale.clone(),
-    center: sprite.center.clone(),
+    quaternion: sprite.quaternion.clone(),
   }));
   const opposingCameras = [
     new THREE.Vector3(0, 1.64, 20),
@@ -181,25 +214,40 @@ test('Arena keeps fixed world coordinates while Sprite billboarding stays legibl
   for (const [index, runtimeProp] of arena.photoProps.entries()) {
     const layout = PHOTO_PROP_LAYOUTS[index];
     assert.equal(runtimeProp.sprite.name, `individual-photo-prop-${layout.name}`);
-    assert.equal(runtimeProp.sprite.type, 'Sprite', `${layout.name}: no automatic billboarding`);
+    assert.equal(runtimeProp.sprite.type, 'Mesh', `${layout.name}: not a fixed plane mesh`);
+    assert.equal(runtimeProp.sprite.userData.fixedPhotoProp, true);
+    assert.equal(runtimeProp.sprite.userData.fixedYaw, layout.yaw);
+    assert.equal(runtimeProp.sprite.material.side, THREE.DoubleSide);
+    assert.equal(runtimeProp.sprite.geometry.type, 'PlaneGeometry');
+    assert.equal(runtimeProp.sprite.geometry.parameters.width, layout.width);
+    assert.equal(runtimeProp.sprite.geometry.parameters.height, layout.height);
     assert.deepEqual(runtimeProp.sprite.position.toArray(), initial[index].position.toArray());
     assert.deepEqual(runtimeProp.sprite.scale.toArray(), initial[index].scale.toArray());
-    assert.deepEqual(runtimeProp.sprite.center.toArray(), initial[index].center.toArray());
+    assert.deepEqual(runtimeProp.sprite.quaternion.toArray(), initial[index].quaternion.toArray());
     assert.deepEqual(
       [runtimeProp.sprite.position.x, layout.position[1], runtimeProp.sprite.position.z],
       layout.position,
       `${layout.name}: photo world position drifted`,
     );
-    assert.equal(runtimeProp.sprite.center.y, layout.visibleBottomRatio);
     assert.deepEqual(runtimeProp.footprintBounds, photoPropFootprintBounds(layout));
 
-    // Sprite lower edge is position.y - center.y * height. The first opaque
-    // source row begins visibleBottomRatio * height above that edge.
+    // Plane lower edge includes transparent source padding. The first opaque
+    // source row remains grounded two centimetres above the floor.
     const visibleBottom = runtimeProp.sprite.position.y
-      - runtimeProp.sprite.center.y * layout.height
+      - layout.height / 2
       + layout.visibleBottomRatio * layout.height;
     assert.ok(Math.abs(visibleBottom - 0.02) < 1e-8, `${layout.name}: photo floats`);
   }
+});
+
+test('Battle Village renders no roof meshes', () => {
+  const arena = new Arena(new THREE.Scene(), {});
+  const roofNodes = [];
+  arena.root.traverse((node) => {
+    if (/roof/i.test(node.name)) roofNodes.push(node.name);
+  });
+  assert.deepEqual(roofNodes, []);
+  assert.equal(arena.materials.roof.name, 'photo-roof-shingles');
 });
 
 test('every moved collider blocks bodies and shots without rendering a proxy box', () => {
