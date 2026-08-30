@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 export const SERVER_TICK_RATE = 30;
 export const SNAPSHOT_RATE = 30;
 
@@ -18,8 +18,9 @@ export const MATCH_RULES = Object.freeze({
 
 export const WEAPONS = Object.freeze({
   knives: {
-    ammo: 5, reserve: 20, reloadMs: 900, damage: 28, headMultiplier: 1.55,
-    interval: 0.42, spread: 0.02, focusSpread: 0.008, pellets: 1,
+    ammo: 1, reserve: 0, reloadMs: 0, usesAmmo: false,
+    damage: 16, headMultiplier: 1.55,
+    interval: 1, spread: 0.02, focusSpread: 0.008, pellets: 1,
     range: 24, projectile: false,
   },
   shortbow: {
@@ -63,6 +64,20 @@ export const WEAPONS = Object.freeze({
 });
 
 const PICKUP_POOL = ['shortbow', 'ember', 'crossbow', 'lightning', 'longbow', 'greatsword', 'fireball'];
+
+// Free-standing photographic props use these invisible physical footprints.
+// Their original cover boxes remain in MAPS below; these additional bounds
+// make the relocated objects solid for both authoritative movement and shots
+// without drawing another rectangular proxy in the client scene.
+export const BATTLE_VILLAGE_PROP_COLLIDERS = Object.freeze({
+  'central-wooden-cart': Object.freeze([-19.4, 0, 2.1, -14.6, 1.9, 3.9]),
+  'west-hay-bales': Object.freeze([-13.8, 0, 11.7, -9.2, 1.45, 13.3]),
+  'east-hay-bales': Object.freeze([9.2, 0, -13.3, 13.8, 1.45, -11.7]),
+  'red-flank-tent': Object.freeze([-13, 0, -14.3, -9, 2.35, -11.7]),
+  'blue-flank-tent': Object.freeze([9, 0, 11.7, 13, 2.35, 14.3]),
+  'west-archery-target': Object.freeze([-19.1, 0, 13.275, -16.9, 2.15, 13.725]),
+  'east-archery-target': Object.freeze([16.9, 0, -14.225, 19.1, 2.15, -13.775]),
+});
 
 // One compact, mirrored two-home arena. Three lanes, short spawn-to-action time,
 // readable landmark cover, and equivalent routes for both sides follow the
@@ -119,6 +134,8 @@ export const MAPS = Object.freeze([
       [15.1, 0, 7.5, 18.3, 2.35, 11.1],
       [-15.7, 0, 7.1, -14.1, 2.15, 8.1],
       [14.1, 0, -8.1, 15.7, 2.15, -7.1],
+
+      ...Object.values(BATTLE_VILLAGE_PROP_COLLIDERS),
     ],
   },
 ]);

@@ -15,8 +15,8 @@ primary_region = "ord"
 
   [http_service.concurrency]
     type = "connections"
-    soft_limit = 150
-    hard_limit = 200
+    soft_limit = 100
+    hard_limit = 120
 
   [[http_service.checks]]
     interval = "15s"

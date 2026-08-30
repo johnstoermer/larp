@@ -15,7 +15,7 @@ built directly on 98.css.
 
 ## Play modes
 
-The primary mode is a live, server-authoritative 1v1 duel. Quick Match,
+Arena is a live, server-authoritative 1v1 duel. Quick Match,
 five-letter private-room codes, shareable invite links, local movement
 prediction, server reconciliation, buffered opponent interpolation,
 lag-compensated hit registration, and a 20-second reconnect hold follow the
@@ -23,6 +23,11 @@ real-time multiplayer conventions used on herm.cool. A complete practice
 match against the Questmaster bot is also available from the title screen.
 
 Win two takes to claim a round and four rounds to win the match.
+
+War is a separate 40v40 control-point match on a 240-by-200 open field. Humans
+choose a class and replace deterministic bots, which keep both teams at 40.
+There are no field pickups: hold the central point to reach 100%, with a
+contested overtime grace at the end.
 
 ## Arsenal
 
@@ -36,7 +41,9 @@ Win two takes to claim a round and four rounds to win the match.
 - Fireball tome
 
 Every weapon has one first-person idle image plus a stepped firing sequence.
-Charge-based ranged weapons also have three reload poses. Both bows instead
+Throwing knives are ammo-free and repeat once per second while the left mouse
+button is held; they never enter a reload. Magazine-based ranged weapons have
+three reload poses. Both bows instead
 have three draw frames and automatically nock their next arrow without ammo or
 reload bookkeeping: hold the left mouse button to draw and release it to loose
 the arrow. The greatsword is
@@ -51,14 +58,15 @@ fireball therefore appear exactly once as world-space effects, never doubled
 inside the photographic player layer.
 
 For weapons that do use ammunition, pulling the trigger on an empty magazine
-starts a reload automatically whenever reserve ammunition remains. Bows and
-the greatsword stay exempt because they are intentionally ammo-free.
+starts a reload automatically whenever reserve ammunition remains. Throwing
+knives, bows, and the greatsword stay exempt because they are intentionally
+ammo-free.
 
 ## Controls
 
 - `WASD` move
 - `Mouse` aim
-- `Left mouse` attack; hold and release for bows
+- `Left mouse` attack; hold for throwing knives, hold and release for bows
 - `Right mouse` focus
 - `Shift` sprint
 - `Space` jump / wall-run
@@ -68,7 +76,8 @@ the greatsword stay exempt because they are intentionally ammo-free.
 
 ## Multiplayer
 
-The Node/WebSocket server simulates and broadcasts snapshots at 30 Hz. It owns
+The Node/WebSocket server broadcasts Arena at 30 Hz and the 80-slot War
+simulation at 10 Hz. It owns
 match time, phases, scores, health, ammunition, reloads, pickups,
 fire cadence, hit tests, fireball simulation, overtime, and disconnect
 forfeits. Browsers predict only their own motion, reconcile against accepted
@@ -79,8 +88,8 @@ input sequences, and interpolate their opponent.
 - Reloading the page or briefly losing the socket reclaims the same session.
 - Practice and online play share the same forgiving photographed-character
   body/head hit profile, while world cover still blocks the shot first.
-- Disposable movement and snapshot messages yield to reliable combat events
-  if a WebSocket becomes backpressured.
+- Disposable movement, snapshot, and cosmetic attack messages yield to
+  reliable match state and targeted knockback if a WebSocket is backpressured.
 - `/api/status` exposes aggregate health without player-identifying data.
 
 See [docs/MULTIPLAYER.md](docs/MULTIPLAYER.md) for the authority model.

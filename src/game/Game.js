@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { CHARACTER_HITBOX } from '../../shared/characterHitbox.js';
+import { WAR_CLASSES, normalizeWarClass } from '../../shared/warConfig.js';
 import { GameRenderer } from './Renderer.js';
 import { Arena } from './Arena.js';
 import { AudioSystem } from './AudioSystem.js';
@@ -9,7 +10,10 @@ import { NetworkClient } from './NetworkClient.js';
 import { PickupManager } from './PickupManager.js';
 import { PlayerController } from './PlayerController.js';
 import { RemotePlayer } from './RemotePlayer.js';
+import { TitleAttractBattle } from './TitleAttractBattle.js';
 import { VFX } from './VFX.js';
+import { WarArena } from './WarArena.js';
+import { WarCrowd } from './WarCrowd.js';
 import { clamp, seededRandom, shuffle } from './math.js';
 import { loadPhotoTexture } from './photoTexture.js';
 import { getArenaLoadout, WEAPONS } from './weapons.js';
@@ -70,6 +74,16 @@ function raySphereDistance(origin, direction, center, radius) {
   return point ? point.distanceTo(origin) : null;
 }
 
+export function warResumeCounters(snapshot, slot) {
+  const local = snapshot?.combatants?.find(
+    (combatant) => combatant.id === Number(slot),
+  );
+  return {
+    state: Math.max(0, Number(local?.ack) || 0),
+    shot: Math.max(0, Number(local?.shotAck) || 0),
+  };
+}
+
 export class Game {
   constructor(canvas) {
     this.ui = new Interface();
@@ -79,9 +93,13 @@ export class Game {
     this.camera = this.rendering.camera;
     this.audio = new AudioSystem();
     this.arena = new Arena(this.scene, this.rendering.renderer);
+    this.baseArena = this.arena;
+    this.warArena = null;
+    this.warCrowd = null;
     this.vfx = new VFX(this.scene, this.camera);
     this.player = new PlayerController(this.camera, this.arena, this.audio);
     this.bot = new BotController(this.scene, this.arena, this.audio);
+    this.titleAttract = new TitleAttractBattle(this.scene, this.arena, this.vfx);
     this.remote = new RemotePlayer(this.bot);
     this.network = new NetworkClient();
     this.pickups = new PickupManager(this.scene, this.camera);
@@ -117,7 +135,7 @@ export class Game {
     this.matchType = 'practice';
     this.onlinePaused = false;
     this.onlineSlot = 0;
-    this.onlineOpponent = 'NEIGHBOR';
+    this.onlineOpponent = 'Opponent';
     this.onlineRoomId = null;
     this.onlinePrivateMatch = false;
     this.onlineSnapshot = null;
@@ -133,15 +151,27 @@ export class Game {
     this.lastOnlineCountdown = 4;
     this.hudAccumulator = 0;
     this.performanceAccumulator = 0;
+    this.warTeam = 0;
+    this.warSlot = null;
+    this.warClassId = 'shortbow';
+    this.warSnapshot = null;
+    this.warLastAttackAt = -Infinity;
+    this.warSendAccumulator = 0;
     this.setupEvents();
     this.setupNetworkEvents();
     this.setupTitleScene();
     this.ui.setMuted(this.audio.muted);
     this.ui.sensitivity.value = String(this.player.sensitivity);
-    this.ui.callsign.value = this.network.name || 'ROOKIE';
+    this.ui.callsign.value = this.network.name || 'PLAYER';
     this.ui.qualityProfile.value = this.rendering.qualityProfile;
+    const selectedMode = localStorage.getItem('larp-mode') === 'war' ? 'war' : 'arena';
+    this.selectWarNextClass(localStorage.getItem('larp-war-class'));
+    this.ui.setSelectedMode(selectedMode);
     const invitedRoom = new URLSearchParams(location.search).get('room');
-    if (invitedRoom) this.ui.showPrivateLobby(invitedRoom);
+    if (invitedRoom) {
+      this.titleAttract.stop();
+      this.ui.showPrivateLobby(invitedRoom);
+    }
     else if (this.network.resumeRequested) {
       window.setTimeout(() => this.resumeOnlineSession(), 0);
     }
@@ -152,10 +182,24 @@ export class Game {
   setupEvents() {
     this.ui.startButton.addEventListener('click', () => this.startMatch());
     this.ui.onlineButton.addEventListener('click', () => this.startQuickPlay());
-    this.ui.privateButton.addEventListener('click', () => this.ui.showPrivateLobby());
+    this.ui.gameMode.addEventListener('change', () => {
+      const mode = this.ui.gameMode.value === 'war' ? 'war' : 'arena';
+      localStorage.setItem('larp-mode', mode);
+      this.ui.setSelectedMode(mode);
+    });
+    this.ui.warClass.addEventListener('change', (event) => {
+      this.selectWarNextClass(event.target.value, true);
+    });
+    this.ui.warRespawnClass.addEventListener('change', (event) => {
+      this.selectWarNextClass(event.target.value, true);
+    });
+    this.ui.privateButton.addEventListener('click', () => {
+      this.titleAttract.stop();
+      this.ui.showPrivateLobby();
+    });
     this.ui.lobbyCloseButton.addEventListener('click', () => {
       this.network.cancelQueue();
-      this.ui.showTitle();
+      this.setupTitleScene();
     });
     this.ui.createRoomButton.addEventListener('click', () => this.createPrivateRoom());
     this.ui.joinRoomButton.addEventListener('click', () => this.joinPrivateRoom());
@@ -170,7 +214,7 @@ export class Game {
     });
     this.ui.copyRoomButton.addEventListener('click', () => this.copyInviteLink());
     this.ui.callsign.addEventListener('change', () => {
-      const name = this.ui.callsign.value.trim().slice(0, 18) || 'ROOKIE';
+      const name = this.ui.callsign.value.trim().slice(0, 18) || 'PLAYER';
       this.ui.callsign.value = name;
       this.network.name = name;
       localStorage.setItem('larp-name', name);
@@ -179,7 +223,9 @@ export class Game {
     this.ui.restartButton.addEventListener('click', () => this.startMatch());
     this.ui.quitButton.addEventListener('click', () => this.returnToTitle());
     this.ui.rematchButton.addEventListener('click', () => {
-      if (this.matchType === 'online') {
+      if (this.matchType === 'war') {
+        this.startQuickPlay();
+      } else if (this.matchType === 'online') {
         this.network.send({ type: 'rematch' });
         this.ui.showRematchWaiting();
       } else {
@@ -200,7 +246,17 @@ export class Game {
     });
     this.canvas.addEventListener('contextmenu', (event) => event.preventDefault());
     this.canvas.addEventListener('click', () => {
-      if (this.mode === 'match' && this.phase === 'playing' && !document.pointerLockElement) {
+      const playable = this.phase === 'playing' || (
+        this.matchType === 'war' &&
+        (this.phase === 'locked' || this.phase === 'control')
+      );
+      if (
+        this.mode === 'match' &&
+        playable &&
+        !this.player.dead &&
+        !document.pointerLockElement
+      ) {
+        this.ui.hideAnnouncement();
         this.requestPointerLock();
       }
     });
@@ -218,7 +274,9 @@ export class Game {
       if (event.code === 'Enter') {
         if (this.mode === 'title') this.startQuickPlay();
         else if (this.mode === 'result') {
-          if (this.matchType === 'online') {
+          if (this.matchType === 'war') {
+            this.startQuickPlay();
+          } else if (this.matchType === 'online') {
             this.network.send({ type: 'rematch' });
             this.ui.showRematchWaiting();
           } else {
@@ -232,16 +290,30 @@ export class Game {
       }
     });
     document.addEventListener('pointerlockchange', () => {
+      const playable = this.phase === 'playing' || (
+        this.matchType === 'war' &&
+        (this.phase === 'locked' || this.phase === 'control')
+      );
       if (
         !document.pointerLockElement &&
         this.mode === 'match' &&
-        this.phase === 'playing'
+        playable &&
+        !this.player.dead
       ) {
         this.pause();
       }
     });
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden && this.mode === 'match' && this.phase === 'playing') {
+      const playable = this.phase === 'playing' || (
+        this.matchType === 'war' &&
+        (this.phase === 'locked' || this.phase === 'control')
+      );
+      if (
+        document.hidden &&
+        this.mode === 'match' &&
+        playable &&
+        !this.player.dead
+      ) {
         this.pause();
       }
       this.lastFrame = performance.now();
@@ -252,10 +324,12 @@ export class Game {
     this.network.addEventListener('status', (event) => {
       const { status, online } = event.detail;
       this.ui.setConnection(status, this.network.rtt, online);
-      if (this.matchType !== 'online') return;
+      if (this.matchType !== 'online' && this.matchType !== 'war') return;
       if (status === 'reconnecting' || status === 'offline') {
         this.ui.showConnectionOverlay(
-          'Reconnecting to the authoritative match server. Your place is held for twenty seconds.',
+          this.matchType === 'war'
+            ? 'Reconnecting to War.'
+            : 'Reconnecting. The match will wait for twenty seconds.',
         );
       } else if (status === 'online') {
         this.ui.hideConnectionOverlay();
@@ -268,14 +342,14 @@ export class Game {
     this.network.addEventListener('queue_status', (event) => {
       if (event.detail.status !== 'searching') return;
       this.ui.showQueue({
-        title: 'FINDING<br>NEIGHBOR',
-        detail: 'Searching the block for the strongest low-latency pairing.',
+        title: 'Finding Match',
+        detail: 'Searching for another player.',
       });
     });
     this.network.addEventListener('private_created', (event) => {
       this.ui.showQueue({
-        title: 'ROOM<br>OPEN',
-        detail: 'The field is reserved. Send the five-rune code to your opponent.',
+        title: 'Match Created',
+        detail: 'Send the match code to the other player. Waiting for them to join.',
         code: event.detail.code,
         copyable: true,
       });
@@ -283,23 +357,51 @@ export class Game {
     this.network.addEventListener('match_found', (event) => {
       this.startOnlineMatch(event.detail);
     });
+    this.network.addEventListener('war_found', (event) => {
+      this.startWarMatch(event.detail);
+    });
     this.network.addEventListener('snapshot', (event) => {
       if (this.matchType === 'online') this.applyOnlineSnapshot(event.detail.state);
     });
     this.network.addEventListener('event', (event) => {
       if (this.matchType === 'online') this.handleOnlineEvent(event.detail);
     });
+    this.network.addEventListener('war_snapshot', (event) => {
+      if (this.matchType === 'war') this.applyWarSnapshot(event.detail.state);
+    });
+    this.network.addEventListener('war_event', (event) => {
+      if (this.matchType === 'war') this.handleWarEvent(event.detail);
+    });
     this.network.addEventListener('error', (event) => {
-      const message = event.detail.message || 'The live match service rejected the request.';
+      const message = event.detail.message || 'The match server rejected the request.';
       this.ui.showLobbyError(message);
     });
     this.network.addEventListener('left_match', () => {
-      if (this.matchType === 'online' && this.mode !== 'title') this.setupTitleScene();
+      if (
+        (this.matchType === 'online' || this.matchType === 'war') &&
+        this.mode !== 'title'
+      ) {
+        this.setupTitleScene();
+      }
+    });
+    this.network.addEventListener('resume_unavailable', () => {
+      if (!this.network.inMatch) this.setupTitleScene();
     });
   }
 
+  selectWarNextClass(value, send = false) {
+    const classId = normalizeWarClass(value);
+    this.ui.warClass.value = classId;
+    this.ui.warRespawnClass.value = classId;
+    localStorage.setItem('larp-war-class', classId);
+    if (send && this.matchType === 'war' && this.network.inMatch) {
+      this.network.send({ type: 'war_select_class', classId });
+    }
+    return classId;
+  }
+
   async connectOnline() {
-    const name = this.ui.callsign.value.trim().slice(0, 18) || 'ROOKIE';
+    const name = this.ui.callsign.value.trim().slice(0, 18) || 'PLAYER';
     this.ui.callsign.value = name;
     try {
       await this.network.connect(name);
@@ -311,9 +413,10 @@ export class Game {
   }
 
   async resumeOnlineSession() {
+    this.titleAttract.stop();
     this.ui.showQueue({
-      title: 'RESTORING<br>MATCH',
-      detail: 'Reclaiming your held slot on the authoritative match server.',
+      title: 'Restoring Match',
+      detail: 'Rejoining the match.',
     });
     if (!(await this.connectOnline())) {
       localStorage.removeItem('larp-active-match');
@@ -322,22 +425,35 @@ export class Game {
   }
 
   async startQuickPlay() {
-    if (this.mode === 'starting' || this.matchType === 'online' && this.mode === 'match') {
+    if (
+      this.mode === 'starting' ||
+      (this.matchType === 'online' || this.matchType === 'war') && this.mode === 'match'
+    ) {
       return;
     }
+    const selectedMode = this.ui.gameMode.value === 'war' ? 'war' : 'arena';
+    const classId = normalizeWarClass(this.ui.warClass.value);
+    if (selectedMode === 'war' && this.network.inMatch) this.network.leave();
+    this.titleAttract.stop();
     await this.audio.init();
     this.audio.click(true);
     this.ui.showQueue({
-      title: 'OPENING<br>LINK',
-      detail: 'Establishing a low-latency channel to the match service.',
+      title: 'Connecting',
+      detail: 'Connecting to the match server.',
     });
-    if (await this.connectOnline()) this.network.quickPlay();
+    if (!(await this.connectOnline())) return;
+    if (selectedMode === 'war') {
+      this.warClassId = classId;
+      this.network.warPlay(classId);
+    } else {
+      this.network.quickPlay();
+    }
   }
 
   async createPrivateRoom() {
     this.ui.showQueue({
-      title: 'OPENING<br>ROOM',
-      detail: 'Securing a private match channel.',
+      title: 'Creating Match',
+      detail: 'Connecting to the match server.',
     });
     if (await this.connectOnline()) this.network.createPrivate();
   }
@@ -345,12 +461,12 @@ export class Game {
   async joinPrivateRoom() {
     const code = this.ui.roomCodeInput.value.trim().toUpperCase();
     if (code.length !== 5) {
-      this.ui.showLobbyError('Enter the complete five-character gate code.');
+      this.ui.showLobbyError('Enter the complete five-character match code.');
       return;
     }
     this.ui.showQueue({
-      title: 'JOINING<br>ROOM',
-      detail: `Opening private gate code ${code}.`,
+      title: 'Joining Match',
+      detail: `Joining match ${code}.`,
       code,
     });
     if (await this.connectOnline()) this.network.joinPrivate(code);
@@ -362,7 +478,7 @@ export class Game {
     const invite = `https://herm.cool/games/larp/?room=${encodeURIComponent(code)}`;
     try {
       await navigator.clipboard.writeText(invite);
-      this.ui.copyRoomButton.textContent = 'INVITE LINK COPIED';
+      this.ui.copyRoomButton.textContent = 'Invite Link Copied';
     } catch {
       this.ui.copyRoomButton.textContent = code;
     }
@@ -380,7 +496,38 @@ export class Game {
     }
   }
 
+  activateArena(nextArena) {
+    if (!nextArena) return;
+    if (this.arena !== nextArena) {
+      this.arena.root.visible = false;
+      nextArena.root.visible = true;
+      this.arena = nextArena;
+      this.player.arena = nextArena;
+      this.bot.arena = nextArena;
+    }
+    nextArena.activateEnvironment?.();
+  }
+
+  ensureWarWorld() {
+    if (!this.warArena) {
+      this.warArena = new WarArena(this.scene, this.rendering.renderer);
+      this.warCrowd = new WarCrowd(this.scene);
+      this.warArena.root.visible = false;
+      this.warCrowd.root.visible = false;
+    }
+    this.activateArena(this.warArena);
+    this.warCrowd.root.visible = true;
+  }
+
   setupTitleScene() {
+    this.titleAttract.stop();
+    this.activateArena(this.baseArena);
+    if (this.warCrowd) {
+      this.warCrowd.clear();
+      this.warCrowd.root.visible = false;
+    }
+    this.warSnapshot = null;
+    this.warSlot = null;
     this.matchType = 'practice';
     this.onlinePaused = false;
     this.onlineRoomId = null;
@@ -399,23 +546,28 @@ export class Game {
     this.arena.load(2, 9124);
     const loadout = getArenaLoadout(9124, 6);
     this.pickups.reset(this.arena.weaponSlots, loadout);
-    this.bot.reset(new THREE.Vector3(7.2, 0.02, -4.8), 0.75, 1);
-    this.bot.equip('crossbow');
-    this.bot.root.visible = true;
+    this.bot.root.visible = false;
     this.player.viewRoot.visible = false;
     this.player.inputEnabled = false;
+    this.player.setMovementScale?.(1);
     this.camera.fov = 58;
     this.camera.updateProjectionMatrix();
     this.ui.setOnlineMatch(false);
+    this.ui.setWarMatch(false);
     this.ui.resetRematchButton();
     this.ui.showTitle();
+    this.titleAttract.start();
   }
 
   async startMatch() {
     if (this.mode === 'starting') return;
+    this.titleAttract.stop();
+    this.activateArena(this.baseArena);
+    this.player.setMovementScale?.(1);
     if (this.network.inMatch) this.network.leave();
     this.matchType = 'practice';
     this.ui.setOnlineMatch(false);
+    this.ui.setWarMatch(false);
     this.mode = 'starting';
     await this.audio.init();
     this.audio.click(true);
@@ -441,6 +593,9 @@ export class Game {
   }
 
   startOnlineMatch(message) {
+    this.titleAttract.stop();
+    this.activateArena(this.baseArena);
+    this.player.setMovementScale?.(1);
     const snapshot = message.snapshot;
     if (!snapshot) return;
     this.matchType = 'online';
@@ -448,7 +603,7 @@ export class Game {
     this.phase = snapshot.phase;
     this.onlinePaused = false;
     this.onlineSlot = Number(message.slot) === 1 ? 1 : 0;
-    this.onlineOpponent = message.opponent || 'NEIGHBOR';
+    this.onlineOpponent = message.opponent || 'Opponent';
     this.onlinePrivateMatch = Boolean(message.privateMatch);
     this.onlineRoomId = message.roomId;
     this.matchSeed = message.seed;
@@ -461,6 +616,7 @@ export class Game {
     this.lastOnlinePhase = null;
     this.lastOnlineCountdown = 4;
     this.ui.setOnlineMatch(true, this.onlineOpponent);
+    this.ui.setWarMatch(false);
     this.ui.hideConnectionOverlay();
     this.ui.showHUD();
     this.player.viewRoot.visible = true;
@@ -468,11 +624,274 @@ export class Game {
     this.audio.click(true);
   }
 
+  startWarMatch(message) {
+    this.titleAttract.stop();
+    const snapshot = message.snapshot;
+    if (!snapshot?.combatants?.length) return;
+    this.ensureWarWorld();
+    this.matchType = 'war';
+    this.mode = 'match';
+    this.phase = snapshot.phase;
+    this.onlinePaused = false;
+    this.warSlot = Number(message.slot);
+    this.warTeam = Number(message.team) === 1 ? 1 : 0;
+    this.warClassId = normalizeWarClass(message.classId);
+    this.onlineRoomId = message.roomId;
+    const resumeCounters = warResumeCounters(snapshot, this.warSlot);
+    this.onlineSequence = resumeCounters.state;
+    this.onlineShotSequence = resumeCounters.shot;
+    this.onlineStateHistory.clear();
+    this.warSendAccumulator = 0;
+    this.warLastAttackAt = -Infinity;
+    this.pickups.reset([], []);
+    this.remote.clear();
+    this.bot.root.visible = false;
+    this.clearProjectiles();
+    this.vfx.clear();
+    this.ui.setSelectedMode('war');
+    this.selectWarNextClass(this.warClassId);
+    this.ui.setOnlineMatch(
+      true,
+      this.warTeam === 0 ? 'Red Team' : 'Blue Team',
+    );
+    this.ui.setWarMatch(true, this.warTeam);
+    this.ui.hideConnectionOverlay();
+    this.ui.showHUD();
+    this.warCrowd.localId = this.warSlot;
+    this.applyWarSnapshot(snapshot, true);
+    this.audio.click(true);
+    if (this.mode === 'match' && !this.player.dead) this.requestPointerLock();
+  }
+
+  equipWarClass(classId) {
+    const normalized = normalizeWarClass(classId);
+    const definition = WAR_CLASSES[normalized];
+    this.warClassId = normalized;
+    if (this.player.weaponType !== definition.weapon) {
+      this.player.equip(definition.weapon, false);
+    }
+    this.player.maxHealth = definition.health;
+    this.player.setMovementScale?.(definition.speed / 6.4);
+  }
+
+  applyWarSnapshot(state, initial = false) {
+    if (!state?.combatants?.length || this.matchType !== 'war') return;
+    const local = state.combatants.find((combatant) => combatant.id === this.warSlot);
+    if (!local) return;
+    const previous = this.warSnapshot?.combatants?.find(
+      (combatant) => combatant.id === this.warSlot,
+    );
+    const respawned = Boolean(previous?.dead && !local.dead);
+    const died = Boolean(previous && !previous.dead && local.dead);
+
+    if (initial || respawned) {
+      this.player.reset(new THREE.Vector3().fromArray(local.position), local.yaw);
+      this.equipWarClass(local.classId);
+      this.selectWarNextClass(local.classId);
+      this.onlineStateHistory.clear();
+      if (respawned && this.mode === 'match') this.requestPointerLock();
+    } else {
+      const predicted = this.onlineStateHistory.get(local.ack);
+      if (predicted) {
+        const correction = TEMP_POINT
+          .fromArray(local.position)
+          .sub(TEMP_POINT_B.fromArray(predicted));
+        const error = correction.length();
+        if (error > 0.05) {
+          this.player.position.addScaledVector(correction, error > 2.2 ? 1 : 0.24);
+        }
+        for (const sequence of this.onlineStateHistory.keys()) {
+          if (sequence <= local.ack) this.onlineStateHistory.delete(sequence);
+        }
+      }
+      this.equipWarClass(local.classId);
+    }
+
+    const numericPreviousHealth = Number(this.player.health);
+    const previousHealth = Number.isFinite(numericPreviousHealth)
+      ? numericPreviousHealth
+      : local.maxHealth;
+    this.player.health = local.health;
+    this.player.maxHealth = local.maxHealth;
+    this.player.ammo = local.ammo;
+    this.player.reserve = local.reserve;
+    if (local.reloading && !this.player.reloading) {
+      this.player.startReload(true);
+    }
+    if (local.reloading) {
+      this.player.reloadRemaining = Math.max(
+        0,
+        Number(local.reloadRemaining || 0) / 1_000,
+      );
+      this.player.reloadDuration = WAR_CLASSES[local.classId].reloadMs / 1_000;
+    } else if (this.player.reloading) {
+      this.player.cancelReload();
+    }
+    this.player.dead = Boolean(local.dead);
+    this.player.respawnRemaining = local.respawnRemaining;
+    this.player.viewRoot.visible = !local.dead && state.phase !== 'result';
+    if (died && document.pointerLockElement) document.exitPointerLock();
+    if (!initial && local.health < previousHealth) {
+      this.rendering.setDamage(0.2);
+      this.player.addShake(0.12, 0.18);
+    }
+
+    this.phase = state.phase;
+    this.warSnapshot = state;
+    this.warCrowd.applySnapshot(state.combatants, performance.now());
+    this.syncWarProjectiles(state.projectiles ?? []);
+    this.warArena.setControlState(state.control);
+    this.ui.updateWarHUD(state.control, local, this.warTeam);
+    if (state.phase === 'result' && this.mode !== 'result') {
+      this.showWarResult(state.winner, state.control?.scores ?? [0, 0]);
+    }
+  }
+
+  handleWarEvent(message) {
+    if (!message?.event) return;
+    if (message.event === 'attack') {
+      const localAttack = message.shooter === this.warSlot;
+      const definition = WEAPONS[normalizeWarClass(message.classId)] ?? WEAPONS.shortbow;
+      const origin = new THREE.Vector3().fromArray(message.origin ?? [0, 1.5, 0]);
+      const direction = new THREE.Vector3().fromArray(message.direction ?? [0, 0, -1]);
+      const hitPoint = new THREE.Vector3().fromArray(
+        message.hitPoint ?? origin.clone().addScaledVector(direction, definition.range).toArray(),
+      );
+      if (!localAttack) {
+        this.vfx.spawnMuzzle(
+          origin,
+          direction,
+          magicColor(definition),
+          magicPower(definition, 0.75),
+          definition.id,
+        );
+        const tracePoints = Array.isArray(message.traces) && message.traces.length
+          ? message.traces
+          : [hitPoint.toArray()];
+        tracePoints.forEach((point, pellet) => {
+          showWeaponTrail(
+            this.vfx,
+            origin,
+            new THREE.Vector3().fromArray(point),
+            definition,
+            pellet,
+          );
+        });
+      }
+      if (message.projectile) this.spawnWarProjectileState(message.projectile);
+      if (localAttack && message.hit) {
+        this.ui.showHit(Boolean(message.headshot), this.elapsed);
+        const targets = Array.isArray(message.hits)
+          ? message.hits
+          : message.target != null
+            ? [{ target: message.target, damage: message.damage }]
+            : [];
+        for (const hit of targets) {
+          const target = this.warSnapshot?.combatants?.find(
+            (combatant) => combatant.id === hit.target,
+          );
+          if (!target) continue;
+          this.vfx.spawnDamageNumber(
+            new THREE.Vector3().fromArray(target.position).add(new THREE.Vector3(0, 2.05, 0)),
+            hit.damage,
+          );
+        }
+      }
+    } else if (message.event === 'class_selected') {
+      this.selectWarNextClass(message.classId);
+    } else if (
+      message.event === 'impulse' &&
+      message.player === this.warSlot &&
+      Array.isArray(message.impulse)
+    ) {
+      this.player.velocity.add(new THREE.Vector3().fromArray(message.impulse));
+    } else if (message.event === 'projectile_explode') {
+      this.handleWarExplosion(message);
+    } else if (message.event === 'match_end') {
+      this.showWarResult(message.winner, message.scores ?? [0, 0]);
+    }
+  }
+
+  spawnWarProjectileState(state) {
+    if (!state || this.onlineProjectiles.has(state.id)) return;
+    const definition = WEAPONS[state.classId] ?? WEAPONS.fireball;
+    const velocity = new THREE.Vector3().fromArray(state.velocity);
+    const projectile = this.spawnProjectile(
+      state.owner === this.warSlot ? 'player' : 'bot',
+      new THREE.Vector3().fromArray(state.position),
+      velocity.clone().normalize(),
+      definition,
+      {
+        networked: true,
+        networkId: state.id,
+        positionIsCenter: true,
+      },
+    );
+    projectile.velocity.copy(velocity);
+    this.onlineProjectiles.set(state.id, projectile);
+  }
+
+  syncWarProjectiles(states) {
+    const active = new Set();
+    for (const state of states) {
+      active.add(state.id);
+      const existing = this.onlineProjectiles.get(state.id);
+      if (!existing) {
+        this.spawnWarProjectileState(state);
+        continue;
+      }
+      existing.position.lerp(new THREE.Vector3().fromArray(state.position), 0.45);
+      existing.velocity.fromArray(state.velocity);
+    }
+    for (const [id, projectile] of this.onlineProjectiles) {
+      if (active.has(id)) continue;
+      const index = this.projectiles.indexOf(projectile);
+      if (index >= 0) this.removeProjectile(index);
+      this.onlineProjectiles.delete(id);
+    }
+  }
+
+  handleWarExplosion(message) {
+    const position = new THREE.Vector3().fromArray(message.position);
+    const projectile = this.onlineProjectiles.get(message.projectileId);
+    if (projectile) {
+      projectile.position.copy(position);
+      this.explodeProjectile(projectile);
+      const index = this.projectiles.indexOf(projectile);
+      if (index >= 0) this.removeProjectile(index);
+      this.onlineProjectiles.delete(message.projectileId);
+    } else {
+      this.vfx.spawnExplosion(position, Number(message.radius) * 0.88);
+      this.audio.explosion(this.getPan(position), 0.9);
+      this.ui.flash();
+    }
+    if (message.owner === this.warSlot && message.damage?.length) {
+      this.ui.showHit(false, this.elapsed);
+    }
+  }
+
+  showWarResult(winner, scores) {
+    if (this.mode === 'result') return;
+    const won = Number(winner) === this.warTeam;
+    this.mode = 'result';
+    this.phase = 'result';
+    this.player.inputEnabled = false;
+    this.player.viewRoot.visible = false;
+    if (document.pointerLockElement) document.exitPointerLock();
+    this.ui.resetRematchButton();
+    this.ui.showResult(
+      won,
+      `${Math.floor(Number(scores[this.warTeam]) || 0)}%`,
+      `${Math.floor(Number(scores[1 - this.warTeam]) || 0)}%`,
+      this.warTeam === 0 ? 'Red Team' : 'Blue Team',
+    );
+  }
+
   loadOnlineRound(state) {
     this.clearProjectiles();
     this.onlineProjectiles.clear();
     this.vfx.clear();
-    const map = this.arena.load(state.mapIndex, state.mapSeed);
+    this.arena.load(state.mapIndex, state.mapSeed);
     const loadout = state.pickups.map((pickup) => pickup.type);
     this.roundLoadout = loadout;
     this.pickups.reset(this.arena.weaponSlots, loadout);
@@ -500,7 +919,7 @@ export class Game {
     this.onlineStateHistory.clear();
     this.onlineSequence = Math.max(this.onlineSequence, Number(local.ack) || 0);
     this.pendingPickupClaims.clear();
-    this.ui.showAnnouncement(map.code, map.name, map.description);
+    this.ui.showAnnouncement('Match', `Round ${state.roundNumber}`);
     this.network.send({
       type: 'ready',
       roundNumber: state.roundNumber,
@@ -509,14 +928,18 @@ export class Game {
 
   returnToTitle() {
     if (document.pointerLockElement) document.exitPointerLock();
-    if (this.matchType === 'online') this.network.leave();
+    if (this.matchType === 'online' || this.matchType === 'war') this.network.leave();
     this.audio.click();
     this.setupTitleScene();
   }
 
   pause() {
-    if (this.mode !== 'match' || this.phase !== 'playing') return;
-    if (this.matchType === 'online') {
+    const playable = this.phase === 'playing' || (
+      this.matchType === 'war' &&
+      (this.phase === 'locked' || this.phase === 'control')
+    );
+    if (this.mode !== 'match' || !playable) return;
+    if (this.matchType === 'online' || this.matchType === 'war') {
       this.onlinePaused = true;
       this.player.inputEnabled = false;
       this.ui.showPause();
@@ -528,7 +951,10 @@ export class Game {
   }
 
   async resume() {
-    if (this.matchType === 'online' && this.onlinePaused) {
+    if (
+      (this.matchType === 'online' || this.matchType === 'war') &&
+      this.onlinePaused
+    ) {
       await this.audio.init();
       this.onlinePaused = false;
       this.ui.hidePause();
@@ -547,7 +973,7 @@ export class Game {
     this.vfx.clear();
     const mapIndex = this.mapOrder[(this.roundNumber - 1) % this.mapOrder.length];
     const mapSeed = this.matchSeed + this.roundNumber * 1009;
-    const map = this.arena.load(mapIndex, mapSeed);
+    this.arena.load(mapIndex, mapSeed);
     const loadout = getArenaLoadout(mapSeed, 6);
     this.roundLoadout = loadout;
     this.pickups.reset(this.arena.weaponSlots, loadout);
@@ -558,7 +984,7 @@ export class Game {
     this.phase = 'roundIntro';
     this.phaseTimer = 2.65;
     this.ui.showHUD();
-    this.ui.showAnnouncement(map.code, map.name, map.description);
+    this.ui.showAnnouncement('Match', `Round ${this.roundNumber}`);
     this.updateHUD();
   }
 
@@ -582,9 +1008,8 @@ export class Game {
     this.phaseTimer = 3.15;
     this.lastCountdown = 4;
     this.ui.showAnnouncement(
-      `TAKE ${String(this.takeNumber).padStart(2, '0')}`,
+      `Round ${this.roundNumber}`,
       '3',
-      'LAST CHAMPION STANDING',
     );
     this.audio.countdown(3);
     this.lastCountdown = 3;
@@ -606,14 +1031,22 @@ export class Game {
     this.phaseTimer = 2.15;
     if (winner === 'player') {
       this.playerTakes += 1;
-      this.ui.showAnnouncement('OPPONENT DOWN', 'TAKE SECURED', `${this.playerTakes} / 2`);
+      this.ui.showAnnouncement(
+        `Round ${this.roundNumber}`,
+        'Point won',
+        `${this.playerTakes}–${this.botTakes}`,
+      );
       this.audio.roundResult(true);
     } else if (winner === 'bot') {
       this.botTakes += 1;
-      this.ui.showAnnouncement('BODY LOST', 'TAKE CONCEDED', `${this.botTakes} / 2`);
+      this.ui.showAnnouncement(
+        `Round ${this.roundNumber}`,
+        'Point lost',
+        `${this.playerTakes}–${this.botTakes}`,
+      );
       this.audio.roundResult(false);
     } else {
-      this.ui.showAnnouncement('SIMULTANEOUS ELIMINATION', 'MUTUAL', 'TAKE REPLAY');
+      this.ui.showAnnouncement(`Round ${this.roundNumber}`, 'Draw');
       this.audio.roundResult(false);
     }
     this.player.inputEnabled = false;
@@ -628,9 +1061,9 @@ export class Game {
     this.phase = 'roundEnd';
     this.phaseTimer = 2.75;
     this.ui.showAnnouncement(
-      playerWon ? 'REALM CONTROLLED' : 'REALM LOST',
-      playerWon ? 'ROUND WON' : 'ROUND LOST',
-      `${this.playerRounds} — ${this.botRounds}`,
+      'Match',
+      playerWon ? 'Round won' : 'Round lost',
+      `${this.playerRounds}–${this.botRounds}`,
     );
     this.audio.roundResult(playerWon);
     this.updateHUD();
@@ -746,16 +1179,14 @@ export class Game {
     if (state.phase === 'loading') {
       this.player.inputEnabled = false;
     } else if (state.phase === 'roundIntro' && previousPhase !== 'roundIntro') {
-      const map = this.arena.map;
-      this.ui.showAnnouncement(map.code, map.name, map.description);
+      this.ui.showAnnouncement('Match', `Round ${state.roundNumber}`);
     } else if (state.phase === 'countdown') {
       const value = Math.max(1, Math.ceil(state.remaining / 1000));
       if (previousPhase !== 'countdown' || value !== this.lastOnlineCountdown) {
         this.lastOnlineCountdown = value;
         this.ui.showAnnouncement(
-          `TAKE ${String(state.takeNumber).padStart(2, '0')}`,
+          `Round ${state.roundNumber}`,
           String(value),
-          'LAST CHAMPION STANDING',
         );
         this.audio.countdown(value);
       }
@@ -763,12 +1194,12 @@ export class Game {
       this.ui.hideAnnouncement();
       this.audio.countdown(0);
       if (!document.pointerLockElement && !initial) {
-        this.ui.showPickup('CLICK THE FIELD TO LOCK AIM', this.elapsed);
+        this.ui.showAnnouncement('Match', 'Click to start');
       }
     } else if (state.phase === 'reconnecting') {
       this.player.inputEnabled = false;
       this.ui.showConnectionOverlay(
-        'The neighbor link was interrupted. Match time is frozen while the server holds both spots.',
+        'The other player disconnected. The match is paused.',
       );
     } else if (state.phase === 'result' && this.mode !== 'result') {
       this.showOnlineResult(state.winner, state.rounds, state.resultReason);
@@ -807,7 +1238,6 @@ export class Game {
     } else if (message.event === 'reload_complete') {
       if (message.player === this.onlineSlot) {
         this.player.finishReload(message.ammo, message.reserve);
-        this.ui.showPickup('RELOADED', this.elapsed);
       } else {
         this.bot.ammo = message.ammo;
         this.bot.reserve = message.reserve;
@@ -820,26 +1250,26 @@ export class Game {
       const draw = message.winner == null;
       this.player.inputEnabled = false;
       this.ui.showAnnouncement(
-        draw ? 'SIMULTANEOUS ELIMINATION' : won ? 'OPPONENT DOWN' : 'BODY LOST',
-        draw ? 'MUTUAL' : won ? 'TAKE SECURED' : 'TAKE CONCEDED',
+        `Round ${this.roundNumber}`,
+        draw ? 'Draw' : won ? 'Point won' : 'Point lost',
         draw
-          ? 'TAKE REPLAY'
-          : `${message.takes[this.onlineSlot]} / 2`,
+          ? ''
+          : `${message.takes[this.onlineSlot]}–${message.takes[this.onlineSlot === 0 ? 1 : 0]}`,
       );
       this.audio.roundResult(won && !draw);
       if (!won && !draw) this.player.viewRoot.visible = false;
     } else if (message.event === 'round_end') {
       const won = message.winner === this.onlineSlot;
       this.ui.showAnnouncement(
-        won ? 'REALM CONTROLLED' : 'REALM LOST',
-        won ? 'ROUND WON' : 'ROUND LOST',
-        `${message.rounds[this.onlineSlot]} — ${message.rounds[this.onlineSlot === 0 ? 1 : 0]}`,
+        'Match',
+        won ? 'Round won' : 'Round lost',
+        `${message.rounds[this.onlineSlot]}–${message.rounds[this.onlineSlot === 0 ? 1 : 0]}`,
       );
       this.audio.roundResult(won);
     } else if (message.event === 'match_end') {
       this.showOnlineResult(message.winner, message.rounds, message.reason);
     } else if (message.event === 'overtime') {
-      this.ui.showAnnouncement('TIME EXPIRED', 'OVERTIME', 'THE VILLAGE IS CONTESTED');
+      this.ui.showAnnouncement(`Round ${this.roundNumber}`, 'Overtime');
       window.setTimeout(() => {
         if (this.matchType === 'online' && this.overtime) this.ui.hideAnnouncement();
       }, 950);
@@ -860,12 +1290,11 @@ export class Game {
       const localDrop = message.player === this.onlineSlot;
       this.ui.showConnectionOverlay(
         localDrop
-          ? 'Reconnecting to the authoritative match server. Your place is being held.'
-          : 'The neighbor link was interrupted. Match time is frozen while their spot is held.',
+          ? 'Reconnecting. The match is paused.'
+          : 'The other player disconnected. The match is paused.',
       );
     } else if (message.event === 'opponent_reconnected') {
       this.ui.hideConnectionOverlay();
-      this.ui.showPickup('MATCH LINK RESTORED', this.elapsed);
     } else if (message.event === 'rematch_status') {
       if (message.ready[this.onlineSlot]) this.ui.showRematchWaiting();
     }
@@ -958,7 +1387,6 @@ export class Game {
       this.player.equip(message.weapon);
       this.player.ammo = message.ammo;
       this.player.reserve = message.reserve ?? this.player.definition.reserve;
-      this.ui.showPickup(WEAPONS[message.weapon].name, this.elapsed);
     } else {
       this.bot.equip(message.weapon);
       this.bot.ammo = message.ammo;
@@ -1048,8 +1476,193 @@ export class Game {
     this.ui.showResult(won, localRounds, remoteRounds, this.onlineOpponent);
     if (reason === 'disconnect' || reason === 'forfeit') {
       this.ui.resultDetail.textContent = won
-        ? 'The rival left the field. The authoritative server awarded the match.'
-        : 'The match ended when your arena link was surrendered.';
+        ? 'Opponent disconnected.'
+        : 'Connection lost.';
+    }
+  }
+
+  traceAgainstWar(origin, direction, range) {
+    const worldHit = this.arena.raycast(origin, direction, range);
+    let distance = worldHit?.distance ?? range;
+    let target = null;
+    for (const combatant of this.warSnapshot?.combatants ?? []) {
+      if (
+        combatant.id === this.warSlot ||
+        combatant.team === this.warTeam ||
+        combatant.dead
+      ) {
+        continue;
+      }
+      const position = new THREE.Vector3().fromArray(combatant.position);
+      const bodyDistance = raySphereDistance(
+        origin,
+        direction,
+        position.clone().add(new THREE.Vector3(0, CHARACTER_HITBOX.body.offsetY, 0)),
+        CHARACTER_HITBOX.body.radius,
+      );
+      const headDistance = raySphereDistance(
+        origin,
+        direction,
+        position.clone().add(new THREE.Vector3(0, CHARACTER_HITBOX.head.offsetY, 0)),
+        CHARACTER_HITBOX.head.radius,
+      );
+      const candidate = bodyDistance == null
+        ? headDistance
+        : headDistance == null
+          ? bodyDistance
+          : Math.min(bodyDistance, headDistance);
+      if (candidate == null || candidate >= distance) continue;
+      distance = candidate;
+      target = combatant;
+    }
+    return {
+      target,
+      distance,
+      point: origin.clone().addScaledVector(direction, distance),
+      worldHit,
+    };
+  }
+
+  fireWarWeapon() {
+    const classDefinition = WAR_CLASSES[this.warClassId];
+    const definition = WEAPONS[classDefinition.weapon];
+    if (this.player.reloading) return false;
+    if (classDefinition.usesAmmo && this.player.ammo <= 0) {
+      return this.startWarReload();
+    }
+    if (
+      !definition ||
+      this.player.dead ||
+      this.elapsed - this.warLastAttackAt < classDefinition.attackMs / 1_000
+    ) {
+      return false;
+    }
+    this.warLastAttackAt = this.elapsed;
+    this.player.registerShot(this.elapsed);
+    this.ui.showShot(this.elapsed);
+    const { origin, direction } = this.player.getAim(TEMP_ORIGIN, TEMP_DIRECTION);
+    const muzzle = this.player.getMuzzlePosition(new THREE.Vector3());
+    this.audio.gun(definition.sound);
+    this.vfx.spawnMuzzle(
+      muzzle,
+      direction,
+      magicColor(definition),
+      magicPower(definition, 1),
+      definition.id,
+    );
+    if (definition.id !== 'greatsword' && !definition.projectile) {
+      const visualSpread = this.player.focused
+        ? definition.focusSpread
+        : definition.spread;
+      const pelletCount = Math.max(1, Number(definition.pellets) || 1);
+      for (let pellet = 0; pellet < pelletCount; pellet += 1) {
+        const pelletDirection = pellet === 0
+          ? direction
+          : spreadDirection(direction, visualSpread);
+        const result = this.traceAgainstWar(
+          origin,
+          pelletDirection,
+          classDefinition.range,
+        );
+        showWeaponTrail(this.vfx, muzzle, result.point, definition, pellet);
+        if (pellet === 0 && !result.target && result.worldHit) {
+          this.vfx.spawnImpact(result.point, result.worldHit.normal, {
+            count: definition.id === 'lightning' ? 18 : 7,
+            color: definition.id === 'lightning' ? 0x8feaff : definition.accent,
+            kind: definition.id,
+          });
+        }
+      }
+    }
+    const shotId = ++this.onlineShotSequence;
+    this.network.send({
+      type: 'war_shoot',
+      shotId,
+      direction: direction.toArray(),
+      yaw: this.player.yaw,
+      pitch: this.player.pitch,
+    });
+    if (definition.id === 'lightning' || definition.id === 'greatsword') {
+      this.ui.flash();
+    }
+    return true;
+  }
+
+  startWarReload() {
+    const definition = WAR_CLASSES[this.warClassId];
+    if (!definition.usesAmmo || !this.player.startReload(true)) return false;
+    this.network.send({ type: 'war_reload' });
+    return true;
+  }
+
+  sendWarState() {
+    if (!this.network.inMatch || this.network.status !== 'online') return;
+    const sequence = ++this.onlineSequence;
+    const position = this.player.position.toArray();
+    this.onlineStateHistory.set(sequence, position);
+    while (this.onlineStateHistory.size > 64) {
+      this.onlineStateHistory.delete(this.onlineStateHistory.keys().next().value);
+    }
+    this.network.send({
+      type: 'war_state',
+      sequence,
+      position,
+      velocity: this.player.velocity.toArray(),
+      yaw: this.player.yaw,
+      pitch: this.player.pitch,
+      grounded: this.player.grounded,
+      sliding: this.lastMovement.sliding,
+      wallRunning: this.lastMovement.wallRunning,
+      focused: this.player.focused,
+      rtt: this.network.rtt,
+    });
+  }
+
+  updateWar(delta) {
+    const canMove =
+      (this.phase === 'locked' || this.phase === 'control') &&
+      this.network.status === 'online' &&
+      !this.onlinePaused &&
+      !this.player.dead;
+    this.lastMovement = this.player.update(delta, canMove);
+    if (canMove && this.lastMovement.reload) this.startWarReload();
+    if (canMove && this.lastMovement.fire) this.fireWarWeapon();
+    if (this.player.dead) {
+      this.player.respawnRemaining = Math.max(
+        0,
+        (Number(this.player.respawnRemaining) || 0) - delta * 1_000,
+      );
+    }
+    this.warCrowd.update(this.camera, delta);
+    this.updateProjectiles(delta);
+
+    this.warSendAccumulator += delta;
+    if (canMove && this.warSendAccumulator >= 1 / 20) {
+      this.warSendAccumulator %= 1 / 20;
+      this.sendWarState();
+    }
+    this.hudAccumulator += delta;
+    if (this.hudAccumulator >= 0.1 && this.warSnapshot) {
+      this.hudAccumulator = 0;
+      const local = this.warSnapshot.combatants.find(
+        (combatant) => combatant.id === this.warSlot,
+      );
+      if (local) {
+        this.ui.updateWarHUD(
+          this.warSnapshot.control,
+          {
+            ...local,
+            health: this.player.health,
+            dead: this.player.dead,
+            respawnRemaining: this.player.respawnRemaining,
+            focused: this.player.focused,
+            ammo: this.player.ammo,
+            reserve: this.player.reserve,
+            usesAmmo: WAR_CLASSES[this.warClassId].usesAmmo,
+          },
+          this.warTeam,
+        );
+      }
     }
   }
 
@@ -1116,6 +1729,10 @@ export class Game {
   }
 
   updateMatch(delta) {
+    if (this.matchType === 'war') {
+      this.updateWar(delta);
+      return;
+    }
     if (this.matchType === 'online') {
       this.updateOnline(delta);
       return;
@@ -1133,9 +1750,8 @@ export class Game {
       if (value !== this.lastCountdown && this.phaseTimer > 0.08) {
         this.lastCountdown = value;
         this.ui.showAnnouncement(
-          `TAKE ${String(this.takeNumber).padStart(2, '0')}`,
+          `Round ${this.roundNumber}`,
           String(value),
-          'LAST CHAMPION STANDING',
         );
         this.audio.countdown(value);
       }
@@ -1175,7 +1791,7 @@ export class Game {
     if (this.takeTime <= 0 && !this.overtime) {
       this.overtime = true;
       this.overtimeTick = 0;
-      this.ui.showAnnouncement('TIME EXPIRED', 'OVERTIME', 'THE VILLAGE IS CONTESTED');
+      this.ui.showAnnouncement(`Round ${this.roundNumber}`, 'Overtime');
       window.setTimeout(() => {
         if (this.phase === 'playing' && this.overtime) this.ui.hideAnnouncement();
       }, 950);
@@ -1197,7 +1813,6 @@ export class Game {
     if (playerPickup) {
       this.pickups.collect(playerPickup);
       this.player.equip(playerPickup.type);
-      this.ui.showPickup(playerPickup.definition.name, this.elapsed);
       this.spawnPickupBurst(playerPickup.position, playerPickup.definition.accent);
     }
     if (botAction.pickup) {
@@ -1244,7 +1859,6 @@ export class Game {
   startPlayerReload(serverControlled) {
     if (!this.player.startReload(serverControlled)) return false;
     if (serverControlled) this.network.send({ type: 'reload' });
-    this.ui.showPickup('RELOADING', this.elapsed);
     return true;
   }
 
@@ -1847,6 +2461,10 @@ export class Game {
   updateTitle(delta) {
     this.titleTime += delta;
     this.titleMapTimer += delta;
+    if (this.mode === 'title' && this.titleAttract.active) {
+      this.titleAttract.update(delta, this.camera);
+      return;
+    }
     const t = this.titleTime;
     const radius = 13.8 + Math.sin(t * 0.17) * 1.2;
     this.camera.position.set(
@@ -1891,7 +2509,7 @@ export class Game {
       }
     }
 
-    this.arena.update(this.elapsed, delta);
+    this.arena.update(this.elapsed, delta, this.camera.position);
     this.pickups.update(this.elapsed, delta);
     this.vfx.update(delta);
     this.ui.update(this.elapsed);

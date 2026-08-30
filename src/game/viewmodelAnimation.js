@@ -98,6 +98,18 @@ export function greatswordSweepForFrame(frameIndex, frameCount = 6) {
   });
 }
 
+/**
+ * Keep active bow poses on the right-hand side of the aim point. The idle
+ * photographs retain their authored composition; only draw/release states
+ * receive this viewport-relative runtime translation.
+ */
+export function bowRightSideOffset(state, viewportWidth) {
+  if (state !== 'draw' && state !== 'fire') return 0;
+  const width = Number(viewportWidth);
+  if (!Number.isFinite(width) || width <= 0) return 0;
+  return width * 0.115;
+}
+
 export function normalizeViewmodelState(state, isBow = false) {
   if (!VIEWMODEL_STATES.has(state)) return 'idle';
   if (state === 'draw' && !isBow) return 'idle';

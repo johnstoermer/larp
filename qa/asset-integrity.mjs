@@ -43,6 +43,7 @@ const EXPECTED_FIXED = Object.freeze({
     'roof-shingles.webp',
     'timber.webp',
   ],
+  war: ['bush.webp', 'tree.webp'],
   root: ['cover.webp'],
 });
 
@@ -83,10 +84,18 @@ const EXPECTED_BY_DIRECTORY = Object.freeze({
   effects: EXPECTED_FIXED.effects,
   viewmodels: VIEWMODELS.files,
   materials: EXPECTED_FIXED.materials,
+  war: EXPECTED_FIXED.war,
   '': EXPECTED_FIXED.root,
 });
 
-const CUTOUT_DIRECTORIES = new Set(['fighters', 'pickups', 'props', 'effects', 'viewmodels']);
+const CUTOUT_DIRECTORIES = new Set([
+  'fighters',
+  'pickups',
+  'props',
+  'effects',
+  'viewmodels',
+  'war',
+]);
 const LEGACY_VIEWMODEL = /^(.*)-(fire|reload|draw)\.webp$/;
 
 async function webpFiles(directory) {
@@ -122,7 +131,11 @@ function entryFor(directory, file) {
       relative,
       directory,
       file,
-      kind: directory === 'viewmodels' ? 'first-person-cutout' : 'world-cutout',
+      kind: directory === 'viewmodels'
+        ? 'first-person-cutout'
+        : directory === 'war'
+          ? 'grounded-crossed-cutout'
+          : 'world-cutout',
       alphaRequired: true,
       allowedOpaque: false,
     };
@@ -238,10 +251,23 @@ function validatePixelReport(entry, pixels) {
       }
     }
   } else {
-    for (const edge of ['top', 'bottom', 'left', 'right']) {
+    const edges = entry.kind === 'grounded-crossed-cutout'
+      ? ['top', 'left', 'right']
+      : ['top', 'bottom', 'left', 'right'];
+    for (const edge of edges) {
       if (pixels.edges[edge].maximum > 16) {
         errors.push(`${entry.relative} touches the ${edge} canvas edge (alpha ${pixels.edges[edge].maximum}).`);
       }
+    }
+    if (
+      entry.kind === 'grounded-crossed-cutout' &&
+      pixels.bounds &&
+      pixels.margins.bottom > Math.ceil(pixels.height * 0.12)
+    ) {
+      errors.push(
+        `${entry.relative} leaves ${pixels.margins.bottom}px below its visible base; ` +
+        'grounded crossed-plane cutouts must sit within 12% of the terrain edge.',
+      );
     }
   }
   return errors;

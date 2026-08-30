@@ -85,13 +85,23 @@ await page.evaluate(() => {
 
 const before = await page.evaluate(() => {
   const game = window.__LARP_GAME__;
+  game.__smokeKnifeThrows = 0;
+  game.__smokeKnifeRegisterShot = game.player.registerShot;
+  game.player.registerShot = function registerSmokeKnifeShot(time) {
+    game.__smokeKnifeThrows += 1;
+    return game.__smokeKnifeRegisterShot.call(this, time);
+  };
   return {
     ammo: game.player.ammo,
     position: game.player.position.toArray(),
   };
 });
 await page.mouse.down();
-await page.waitForTimeout(450);
+await page.waitForFunction(
+  () => window.__LARP_GAME__?.__smokeKnifeThrows >= 2,
+  null,
+  { timeout: 10_000 },
+);
 await page.mouse.up();
 await page.keyboard.down('ShiftLeft');
 await page.keyboard.down('KeyW');
@@ -117,8 +127,13 @@ await page.keyboard.up('ShiftLeft');
 await page.waitForTimeout(250);
 const after = await page.evaluate(() => {
   const game = window.__LARP_GAME__;
+  const knifeThrows = game.__smokeKnifeThrows;
+  game.player.registerShot = game.__smokeKnifeRegisterShot;
+  delete game.__smokeKnifeThrows;
+  delete game.__smokeKnifeRegisterShot;
   return {
     ammo: game.player.ammo,
+    knifeThrows,
     position: game.player.position.toArray(),
     phase: game.phase,
     renderCalls: game.rendering.renderer.info.render.calls,
@@ -280,6 +295,39 @@ const combatFeedback = await page.evaluate(() => {
   } finally {
     game.traceAgainstBot = originalTrace;
   }
+  const healthBarTexture = bot.healthBar?.material?.map;
+  const healthBarTextureId = healthBarTexture?.uuid;
+  const healthBarScale = bot.healthBar?.scale.toArray();
+  bot.velocity.set(4.5, 0, 1.5);
+  bot.root.rotation.y += Math.PI * 0.75;
+  bot.position.x += 0.4;
+  bot.animate(1 / 30, bot.velocity, true);
+  const textureData = healthBarTexture?.image?.data;
+  const textureWidth = healthBarTexture?.image?.width;
+  const fillBounds = bot.healthBar?.userData.fillBounds;
+  let fillContained = true;
+  if (textureData && textureWidth && fillBounds) {
+    for (let offset = 0; offset < textureData.length; offset += 4) {
+      const isNavy =
+        textureData[offset] === 0 &&
+        textureData[offset + 1] === 0 &&
+        textureData[offset + 2] === 128 &&
+        textureData[offset + 3] === 255;
+      if (!isNavy) continue;
+      const pixel = offset / 4;
+      const x = pixel % textureWidth;
+      const y = Math.floor(pixel / textureWidth);
+      if (
+        x < fillBounds.left ||
+        x >= fillBounds.right ||
+        y < fillBounds.top ||
+        y >= fillBounds.bottom
+      ) {
+        fillContained = false;
+        break;
+      }
+    }
+  }
   const number = [...game.vfx.transients]
     .reverse()
     .find((entry) => entry.object?.name === 'damage-number')?.object;
@@ -287,14 +335,44 @@ const combatFeedback = await page.evaluate(() => {
     botHealth: bot.health,
     healthBarName: bot.healthBar?.name,
     healthRatio: bot.healthBar?.userData.ratio,
-    healthFillVisible: bot.healthBarFill?.visible,
+    healthBarIsSingleSprite:
+      bot.healthBar?.isSprite === true && bot.healthBar?.children.length === 0,
+    healthFillPixels: bot.healthBar?.userData.fillPixels,
+    healthFillCapacity: bot.healthBar?.userData.fillCapacity,
+    healthFillContained: fillContained,
+    healthBarStableWhileMoving:
+      bot.healthBar?.material?.map?.uuid === healthBarTextureId &&
+      bot.healthBar?.scale.toArray().every((value, index) => value === healthBarScale[index]),
     damageNumber: number?.userData.damage,
     damageNumberHeadshot: number?.userData.headshot,
     hitmarkerActive: game.ui.hitMarker.classList.contains('active'),
   };
 });
 
-if (after.ammo >= before.ammo) throw new Error('Firing did not consume ammunition.');
+await page.evaluate(() => {
+  const game = window.__LARP_GAME__;
+  game.mode = 'visual-review';
+  game.phase = 'review';
+  game.player.viewRoot.visible = false;
+  game.player.viewmodelLayer?.classList.remove('active');
+  game.camera.position.set(-9, 1.45, 5.5);
+  game.camera.rotation.set(-0.02, 0, 0);
+  game.bot.position.set(-9, 0, 0);
+  game.bot.root.rotation.y = Math.PI * 0.75;
+  game.bot.velocity.set(4.5, 0, 1.5);
+  game.bot.health = 72;
+  game.bot.dead = false;
+  game.bot.animate(1 / 30, game.bot.velocity, true);
+});
+await page.waitForTimeout(100);
+await page.screenshot({
+  path: pathFromUrl(new URL('health-bar-moving.png', output)),
+  fullPage: true,
+});
+
+if (after.ammo !== before.ammo || after.knifeThrows < 2) {
+  throw new Error(`Held throwing knives failed: ${JSON.stringify({ before, after })}`);
+}
 if (
   bowHeld.ammo !== bowAmmoBefore ||
   bowHeld.drawTime < 0.12 ||
@@ -350,11 +428,15 @@ if (
   throw new Error(`Third-person fighter animation failed: ${JSON.stringify(fighterPresentation)}`);
 }
 if (
-  combatFeedback.botHealth !== 72 ||
+  combatFeedback.botHealth !== 84 ||
   combatFeedback.healthBarName !== 'character-health-bar' ||
-  Math.abs(combatFeedback.healthRatio - 0.72) > 0.001 ||
-  !combatFeedback.healthFillVisible ||
-  combatFeedback.damageNumber !== 28 ||
+  Math.abs(combatFeedback.healthRatio - 0.84) > 0.001 ||
+  !combatFeedback.healthBarIsSingleSprite ||
+  combatFeedback.healthFillPixels <= 0 ||
+  combatFeedback.healthFillPixels > combatFeedback.healthFillCapacity ||
+  !combatFeedback.healthFillContained ||
+  !combatFeedback.healthBarStableWhileMoving ||
+  combatFeedback.damageNumber !== 16 ||
   combatFeedback.damageNumberHeadshot !== false ||
   !combatFeedback.hitmarkerActive
 ) {

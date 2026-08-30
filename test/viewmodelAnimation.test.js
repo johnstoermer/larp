@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { WEAPONS } from '../src/game/weapons.js';
 import {
+  bowRightSideOffset,
   createViewmodelFrameSet,
   greatswordSweepForFrame,
   normalizeViewmodelState,
@@ -35,7 +36,7 @@ test('viewmodel frame sets map every action to a canonical numbered file', () =>
   assert.ok(frames.fire.every((frame) => frame.duration === VIEWMODEL_FRAME_STEP_MS));
 });
 
-test('bows receive draw frames, omit reload frames, and the manifest has 56 frames', () => {
+test('bows receive draw frames, omit reload frames, and the runtime manifest has 53 frames', () => {
   let total = 0;
   for (const definition of Object.values(WEAPONS)) {
     const frames = createViewmodelFrameSet(definition, {
@@ -50,7 +51,7 @@ test('bows receive draw frames, omit reload frames, and the manifest has 56 fram
       assert.equal(frames.reload, undefined);
     }
   }
-  assert.equal(total, 56);
+  assert.equal(total, 53);
 });
 
 test('greatsword uses six broad-swing poses and has no reload action', () => {
@@ -70,6 +71,15 @@ test('greatsword poses sweep monotonically from screen-left to screen-right', ()
   assert.ok(poses[3].scale > poses[0].scale);
 });
 
+test('only active bow poses receive the responsive right-side offset', () => {
+  assert.equal(bowRightSideOffset('idle', 1440), 0);
+  assert.equal(bowRightSideOffset('reload', 1440), 0);
+  assert.equal(bowRightSideOffset('draw', 1440), 165.6);
+  assert.equal(bowRightSideOffset('fire', 720), 82.8);
+  assert.equal(bowRightSideOffset('draw', Number.NaN), 0);
+  assert.equal(bowRightSideOffset('fire', -720), 0);
+});
+
 test('bows automatically nock without ammunition or reload actions', () => {
   for (const weapon of BOWS) {
     const definition = WEAPONS[weapon];
@@ -79,6 +89,17 @@ test('bows automatically nock without ammunition or reload actions', () => {
     assert.equal(definition.reserve, 0);
     assert.equal(frames.reload, undefined);
   }
+});
+
+test('held throwing knives cycle fire poses once per second without a reload action', () => {
+  const definition = WEAPONS.knives;
+  const frames = createViewmodelFrameSet(definition);
+  assert.equal(definition.usesAmmo, false);
+  assert.equal(definition.automatic, true);
+  assert.equal(definition.reloadMs, 0);
+  assert.equal(definition.reserve, 0);
+  assert.equal(frames.reload, undefined);
+  assert.equal(viewmodelFireStepMs(definition.interval), VIEWMODEL_FRAME_STEP_MS);
 });
 
 test('draw and unknown states fall back to idle when unavailable', () => {
@@ -132,7 +153,7 @@ test('automatic fire shows every frame before cadence restart', () => {
   const stepMs = viewmodelFireStepMs(interval);
 
   assert.equal(stepMs, (interval * 1000) / 3);
-  assert.equal(viewmodelFireStepMs(WEAPONS.knives.interval), VIEWMODEL_FRAME_STEP_MS);
+  assert.equal(viewmodelFireStepMs(WEAPONS.shortbow.interval), VIEWMODEL_FRAME_STEP_MS);
 
   animation.restartFire(interval);
   assert.equal(animation.frameIndex, 0);

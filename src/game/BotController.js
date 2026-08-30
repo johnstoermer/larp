@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { CHARACTER_HITBOX } from '../../shared/characterHitbox.js';
 import { clamp, damp, moveToward } from './math.js';
+import { createHealthBarTexture, updateHealthBarTexture } from './healthBar.js';
 import { loadPhotoTexture } from './photoTexture.js';
 import { WEAPONS } from './weapons.js';
 
@@ -156,51 +157,33 @@ export class BotController {
   }
 
   createHealthBar() {
-    this.healthBar = new THREE.Group();
+    this.healthBarTexture = createHealthBarTexture(1);
+    const material = new THREE.SpriteMaterial({
+      map: this.healthBarTexture,
+      depthTest: true,
+      depthWrite: false,
+      toneMapped: false,
+      fog: false,
+    });
+    this.healthBar = new THREE.Sprite(material);
     this.healthBar.name = 'character-health-bar';
     this.healthBar.position.set(0, 2.76, 0);
-
-    const backgroundMaterial = new THREE.SpriteMaterial({
-      color: 0x101010,
-      transparent: true,
-      opacity: 0.94,
-      depthTest: true,
-      depthWrite: false,
-      toneMapped: false,
-    });
-    this.healthBarBackground = new THREE.Sprite(backgroundMaterial);
-    this.healthBarBackground.name = 'character-health-bar-background';
-    this.healthBarBackground.scale.set(1.36, 0.16, 1);
-    this.healthBarBackground.renderOrder = 7;
-    this.healthBar.add(this.healthBarBackground);
-
-    const fillMaterial = new THREE.SpriteMaterial({
-      color: 0x28a745,
-      depthTest: true,
-      depthWrite: false,
-      toneMapped: false,
-    });
-    this.healthBarFill = new THREE.Sprite(fillMaterial);
-    this.healthBarFill.name = 'character-health-bar-fill';
-    this.healthBarFill.center.set(0, 0.5);
-    this.healthBarFill.position.set(-0.63, 0, 0.012);
-    this.healthBarFill.renderOrder = 8;
-    this.healthBar.add(this.healthBarFill);
+    this.healthBar.scale.set(1.36, 0.16, 1);
+    this.healthBar.renderOrder = 7;
     this.root.add(this.healthBar);
     this.updateHealthBar();
   }
 
   updateHealthBar() {
-    if (!this.healthBar || !this.healthBarFill) return;
+    if (!this.healthBar || !this.healthBarTexture) return;
     const ratio = clamp(this.health / 100, 0, 1);
+    const metrics = updateHealthBarTexture(this.healthBarTexture, ratio);
     this.healthBar.userData.health = this.health;
     this.healthBar.userData.ratio = ratio;
+    this.healthBar.userData.fillPixels = metrics.fillPixels;
+    this.healthBar.userData.fillCapacity = metrics.fillCapacity;
+    this.healthBar.userData.fillBounds = metrics.fillBounds;
     this.healthBar.visible = this.root.visible;
-    this.healthBarFill.visible = ratio > 0;
-    this.healthBarFill.scale.set(Math.max(0.001, 1.26 * ratio), 0.1, 1);
-    this.healthBarFill.material.color.setHex(
-      ratio > 0.6 ? 0x28a745 : ratio > 0.3 ? 0xffc107 : 0xd6332f,
-    );
   }
 
   setWeaponModel(type) {

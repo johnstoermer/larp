@@ -981,11 +981,10 @@ body {
   left: 50%;
   z-index: 25;
   width: min(760px, 84vw);
-  color: var(--paper);
   text-align: center;
-  text-shadow: 0 3px 12px rgba(0, 0, 0, 0.8);
   transform: translate(-50%, -50%);
   transition: opacity 250ms ease;
+  pointer-events: none;
 }
 
 #announcement p {
@@ -993,10 +992,6 @@ body {
   font-size: 0.68rem;
   font-weight: 900;
   letter-spacing: 0.28em;
-}
-
-#announcement-kicker {
-  color: var(--signal);
 }
 
 #announcement h2 {
@@ -1443,7 +1438,7 @@ body {
   height: min(84vh, 77.3vw);
   transform: translate3d(calc(-50% + var(--vm-x)), var(--vm-y), 0) rotate(var(--vm-rotate)) scale(var(--vm-scale));
   transform-origin: 50% 94%;
-  background-image: url('/assets/larp/viewmodels/throwing-knives-idle.webp?v=photo-v3-20260829');
+  background-image: url('/assets/larp/viewmodels/throwing-knives-idle.webp?v=photo-v4-20260829');
   background-repeat: no-repeat;
   background-size: contain;
   background-position: center bottom;
@@ -1496,9 +1491,7 @@ body {
 }
 
 #network-lobby {
-  background:
-    linear-gradient(rgba(24,25,16,.91), rgba(24,25,16,.91)),
-    url('/assets/larp/cover.webp?v=photo-v3-20260829') center / cover;
+  background: rgba(0, 0, 0, 0.18);
 }
 
 @media (max-width: 900px) {
@@ -1525,10 +1518,7 @@ body {
 }
 
 #title-screen {
-  background:
-    linear-gradient(90deg, rgba(11, 20, 15, 0.97) 0%, rgba(11, 20, 15, 0.9) 35%, rgba(11, 20, 15, 0.42) 62%, rgba(11, 20, 15, 0.18) 100%),
-    linear-gradient(0deg, rgba(11, 20, 15, 0.9), transparent 58%),
-    url('/assets/larp/cover.webp?v=photo-v3-20260829') center / cover no-repeat;
+  background: transparent;
 }
 
 #title-screen::after {
@@ -1551,9 +1541,7 @@ body {
 }
 
 #network-lobby {
-  background:
-    linear-gradient(rgba(15, 25, 18, 0.9), rgba(15, 25, 18, 0.94)),
-    url('/assets/larp/cover.webp?v=photo-v3-20260829') center / cover no-repeat;
+  background: rgba(0, 0, 0, 0.18);
 }
 
 #viewmodel-sprite {
@@ -1748,9 +1736,7 @@ body {
 
 #title-screen {
   color: #000;
-  background:
-    linear-gradient(90deg, rgba(0, 0, 0, 0.34) 0%, rgba(0, 0, 0, 0.08) 49%, rgba(0, 0, 0, 0.02) 100%),
-    url('/assets/larp/cover.webp?v=photo-v3-20260829') center / cover no-repeat;
+  background: transparent;
 }
 
 #title-screen::after,
@@ -2053,9 +2039,7 @@ body {
 
 #network-lobby {
   color: #000;
-  background:
-    linear-gradient(rgba(0, 128, 128, 0.78), rgba(0, 128, 128, 0.78)),
-    url('/assets/larp/cover.webp?v=photo-v3-20260829') center / cover no-repeat;
+  background: rgba(0, 0, 0, 0.18);
 }
 
 #network-lobby::before,
@@ -2668,4 +2652,425 @@ body {
   .performance-control {
     margin-top: 9px;
   }
+}
+
+/* Minimal live interface -----------------------------------------------------
+   Every visible panel and control below uses a 98.css primitive. These rules
+   only place content and set type scale; 98.css remains the chrome owner. */
+.title-copy {
+  top: 24px;
+  left: 24px;
+  width: min(340px, 44vw);
+}
+
+.title-window-body {
+  margin: 8px;
+}
+
+#game-title {
+  margin: 0 0 8px;
+  color: #000;
+  font-family: inherit;
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.2;
+  text-shadow: none;
+}
+
+#game-root .title-copy .action-button {
+  min-height: 30px;
+  margin-top: 0;
+}
+
+#game-root .action-button {
+  justify-content: center;
+}
+
+.title-secondary-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.callsign-field {
+  margin-top: 7px;
+}
+
+.title-build {
+  position: static;
+  width: auto;
+  margin: 0 2px 2px;
+}
+
+.title-controls {
+  right: 24px;
+  bottom: 24px;
+  width: min(350px, 42vw);
+}
+
+.title-controls dl {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.title-controls dl > div {
+  min-height: 32px;
+}
+
+.lobby-shell.window {
+  width: min(390px, 88vw);
+}
+
+.lobby-shell h2 {
+  margin: 0 0 7px;
+  color: #000;
+  font-family: inherit;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.2;
+  text-shadow: none;
+}
+
+.join-controls > div {
+  display: flex;
+  gap: 4px;
+}
+
+.join-controls input {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  letter-spacing: 0.12em;
+  text-align: center;
+}
+
+.match-queue {
+  min-height: 48px;
+  margin-top: 8px;
+  padding: 8px;
+}
+
+.match-queue > strong {
+  display: block;
+  font-size: 24px;
+  letter-spacing: 0.12em;
+}
+
+.match-header.window {
+  top: 8px;
+  display: block;
+  width: min(330px, calc(100vw - 24px));
+  color: #000;
+}
+
+.match-title-bar #take-timer {
+  flex: 0 0 auto;
+  color: #fff;
+  font-family: "Pixelated MS Sans Serif", Arial, sans-serif;
+  font-size: 11px;
+}
+
+.match-score {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 7px 8px;
+}
+
+.match-player,
+.match-opponent {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+}
+
+.match-opponent {
+  flex-direction: row-reverse;
+}
+
+.score-name {
+  max-width: 84px;
+  overflow: hidden;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.match-player > strong,
+.match-opponent > strong {
+  color: #000080;
+  font-size: 16px;
+}
+
+.round-points {
+  color: #555;
+  font-size: 9px;
+}
+
+.match-network.status-bar {
+  margin: 0 1px 1px;
+}
+
+.match-network .status-bar-field {
+  text-align: center;
+}
+
+.player-status.health-panel {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  display: block;
+  width: 184px;
+  color: #000;
+}
+
+.player-status .window-body {
+  margin: 7px;
+}
+
+.player-health-row,
+.player-ammo-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.player-health-row > strong,
+.player-ammo-row > strong {
+  font-size: 14px;
+}
+
+.player-status .progress-indicator {
+  height: 18px;
+  margin: 4px 0 6px;
+}
+
+.player-ammo-row small {
+  font-size: 9px;
+  font-weight: 400;
+}
+
+.player-status.ammo-free .player-ammo-row {
+  display: none;
+}
+
+#war-class-field.hidden,
+#arena-score.hidden,
+#war-score.hidden,
+#war-respawn-class-field.hidden {
+  display: none;
+}
+
+#announcement.window {
+  width: min(280px, calc(100vw - 24px));
+  color: #000;
+  text-align: left;
+}
+
+#announcement .announcement-body {
+  min-height: 54px;
+  margin: 8px;
+  text-align: center;
+}
+
+#announcement h2 {
+  margin: 5px 0;
+  color: #000;
+  font-family: inherit;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.2;
+}
+
+#announcement p {
+  margin: 0;
+  color: #000;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+#announcement-detail:empty,
+#result-detail:empty {
+  display: none;
+}
+
+.pause-box.window,
+.result-copy.window,
+.connection-window.window {
+  width: min(340px, 86vw);
+}
+
+.pause-window-body,
+.result-window-body,
+.connection-window-body {
+  margin: 9px;
+}
+
+.pause-box .action-button,
+.pause-box .text-button,
+.result-copy .action-button,
+.result-copy .text-button {
+  width: 100%;
+  min-height: 27px;
+  margin-top: 5px;
+}
+
+#audio-toggle {
+  position: relative;
+  right: auto;
+  bottom: auto;
+  width: 100%;
+  min-width: 0;
+  margin-top: 8px;
+}
+
+.result-copy h2 {
+  margin: 0 0 8px;
+  color: #000;
+  font-family: inherit;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.2;
+  text-shadow: none;
+}
+
+.match-result-score {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  column-gap: 6px;
+  width: 100%;
+  margin: 8px 0;
+  padding: 6px;
+}
+
+.match-result-score > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.match-result-score > div:last-child {
+  flex-direction: row-reverse;
+}
+
+.match-result-score strong {
+  color: #000080;
+  font-size: 20px;
+}
+
+#result-detail,
+#connection-detail {
+  margin: 7px 0;
+  color: #000;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 1.35;
+  text-transform: none;
+}
+
+.reconnect-track.progress-indicator {
+  height: 18px;
+}
+
+#desktop-warning {
+  display: none;
+}
+
+.desktop-warning-window,
+.error-window {
+  width: min(300px, 84vw);
+}
+
+.desktop-warning-window p,
+.error-window p {
+  margin: 0;
+}
+
+#error-screen {
+  place-items: center;
+}
+
+#error-screen > .error-window {
+  max-width: 300px;
+}
+
+@media (max-width: 700px), (pointer: coarse) and (max-width: 1200px) {
+  #desktop-warning {
+    align-items: center;
+    justify-content: center;
+    color: #000;
+  }
+}
+
+@media (max-width: 900px) {
+  .match-header.window {
+    width: min(310px, calc(100vw - 20px));
+  }
+}
+
+@media (max-height: 620px) {
+  .title-controls {
+    display: none;
+  }
+}
+
+/* War mode adds only layout. Standard selects, windows, title bars and
+   progress indicators continue to receive all chrome from base 98.css. */
+.title-mode-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 7px;
+}
+
+.mode-field,
+.war-class-field,
+.war-respawn-class-field {
+  display: grid;
+  gap: 3px;
+}
+
+.mode-field select,
+.war-class-field select,
+.war-respawn-class-field select {
+  width: 100%;
+}
+
+.war-respawn-class-field {
+  margin-top: 6px;
+}
+
+.war-score {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 6px;
+  margin: 7px 8px;
+}
+
+.war-score > div:not(.progress-indicator) {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 5px;
+}
+
+.war-score strong {
+  color: #000080;
+  font-size: 16px;
+}
+
+.war-score .progress-indicator {
+  grid-column: 1 / -1;
+  height: 14px;
 }

@@ -388,7 +388,7 @@ export class Room {
     player.sliding = sliding;
     player.wallRunning = Boolean(message.wallRunning);
     player.focused = Boolean(message.focused);
-    player.rtt = clamp(Number(message.rtt) || 0, 0, 800);
+    player.rtt = clamp(Number(session.measuredRtt) || 0, 0, 800);
     player.lastSequence = sequence;
     player.lastStateAt = now;
     player.history.push({ at: now, position: copyVector(player.position) });
@@ -452,6 +452,7 @@ export class Room {
     ) {
       return;
     }
+    if (!isFiniteVector(message?.direction)) return;
     const requestedDirection = normalize(message.direction);
     if (!requestedDirection) return;
     const yaw = safeAngle(message.yaw, shooter.yaw, -Math.PI * 32, Math.PI * 32);

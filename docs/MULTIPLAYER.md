@@ -1,20 +1,29 @@
 # Multiplayer architecture
 
 LARP runs one authoritative match process on Fly.io. The browser never submits
-damage, scores, ammunition totals, or pickup outcomes. Protocol version 3 is
-shared by the browser client, automated load clients, and server.
+damage, scores, ammunition totals, pickup outcomes, or control-point ownership.
+Protocol version 4 is the shared wire contract for the browser client,
+automated load clients, and server. War messages are additive, mode-scoped
+messages so an Arena client never enters the 80-player path accidentally.
 
 ## Session flow
 
 1. The client opens `/ws` and sends its protocol version, callsign, and opaque
    reconnect token.
-2. Quick play enters a FIFO queue. Private play reserves a five-character
+2. Arena quick play enters a FIFO queue. Private play reserves a five-character
    field code until a second player joins.
 3. The room selects the deterministic Battle Village map and loadout seed.
 4. Both clients load the arena and report readiness before the intro begins.
 5. The server advances match phases and sends fresh snapshots at 30 Hz.
 6. A dropped socket freezes match time for up to 20 seconds. Reconnecting with
    the same token restores the player, room, and slot.
+
+War play instead joins an available 40-versus-40 room immediately. A human
+replaces one deterministic bot in a balanced team slot; bots continue to fill
+all other slots. A disconnect hands that slot back to its bot, so the larger
+match never pauses. The session token reclaims the same slot on reconnect.
+`WAR_MODE.md` records the exact point, capture, score, overtime, class, respawn,
+map, and performance choices.
 
 ## Authority boundaries
 
@@ -31,6 +40,11 @@ The server owns:
 - fireball movement, splash occlusion, self-damage, and impulse;
 - movement sanity checks, arena bounds, and collision rejection.
 
+For War the server additionally owns team allocation, class validation,
+40-versus-40 bot fill, fixed-tick bot movement and aim, respawns, point
+occupancy, capture ownership, percentage, overtime, and the result. War has no
+field weapon pickups.
+
 The client owns:
 
 - immediate local movement prediction;
@@ -39,6 +53,12 @@ The client owns:
 - buffered opponent interpolation and short extrapolation;
 - correction against the server-acknowledged input sequence.
 
+War clients additionally own only local prediction and a bounded 79-cutout
+render pool: one lightweight cutout for every possible remote slot while the
+local slot uses its first-person viewmodel. The client receives all 80 plain
+records, distance-culls beyond the field, and reduces animation and health-bar
+work with distance; it never runs 80 heavyweight bot controllers.
+
 Practice and multiplayer both import one hit profile: a `0.68`-radius body
 sphere centered `0.96` units above the feet and a `0.38`-radius head sphere
 centered at `1.75`. The world trace is resolved first, so the more forgiving
@@ -46,15 +66,23 @@ character silhouette never permits a shot through cover.
 
 ## Operational limits
 
-Messages are capped at 4 KiB and 100 messages per second per session.
-WebSocket compression is disabled to avoid latency and memory overhead on
-small real-time packets. Client state and server snapshots are disposable when
-a socket is already backpressured: the next current state replaces stale
-realtime data, while shots, damage, reloads, and match events remain reliable.
-Only one application ping is outstanding at a time, and the HUD reports the
-rolling median of the latest measured round trips so an isolated main-thread
-stall does not masquerade as a persistent network route problem.
+Inbound messages are capped at 4 KiB and 100 messages per second per session.
+The limiter runs before JSON parsing, emits one warning per rate window, and
+closes a client that sustains 200 messages per second. Outbound WebSocket
+frames larger than 1 KiB use level-one per-message deflate without context
+takeover; small input, ping, and match-control frames avoid compression work.
 
-Fly connection concurrency is capped at 200, and `/api/status` reports room,
-queue, connection, traffic, dropped realtime snapshots, and tick-drift metrics
-without exposing player identities.
+Client state, War snapshots, and cosmetic attack/explosion broadcasts are
+disposable when a socket is already backpressured. Authoritative deaths,
+reloads, match transitions, and each affected player's fireball impulse remain
+reliable; knockback is sent directly to that player rather than depending on a
+droppable visual event. WebSocket control ping/pong supplies the server-owned
+RTT used for bounded lag compensation. The HUD separately reports a rolling
+median of application round trips so an isolated main-thread stall does not
+masquerade as a persistent route problem.
+
+The single 256 MiB process admits at most 120 concurrent WebSockets and one
+80-slot War room; overflow receives a capacity response instead of allocating
+another 80-bot simulation. Fly uses matching 100/120 soft and hard connection
+limits. `/api/status` reports room, queue, connection, traffic, dropped
+realtime messages, and tick-drift metrics without exposing player identities.

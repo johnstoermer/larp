@@ -5,9 +5,11 @@ import { loadPhotoTexture } from './photoTexture.js';
 export const WEAPONS = Object.freeze({
   knives: {
     id: 'knives', asset: 'throwing-knives', name: 'THROWING KNIVES', shortName: 'KNIVES',
-    ammo: 5, reserve: 20, reloadMs: 900, damage: 28, headMultiplier: 1.55,
-    interval: 0.42, spread: 0.02, focusSpread: 0.008, pellets: 1, range: 24,
-    recoil: 0.42, automatic: false, projectile: false, fireMode: 'THROW / FOAM',
+    ammo: 1, reserve: 0, reloadMs: 0, usesAmmo: false,
+    viewmodelFrames: Object.freeze({ reload: 0 }),
+    damage: 16, headMultiplier: 1.55,
+    interval: 1, spread: 0.02, focusSpread: 0.008, pellets: 1, range: 24,
+    recoil: 0.42, automatic: true, projectile: false,
     accent: 0xd6c7a2, casing: 0xd6c7a2, sound: 'knives',
   },
   shortbow: {
@@ -16,28 +18,28 @@ export const WEAPONS = Object.freeze({
     viewmodelFrames: Object.freeze({ reload: 0 }),
     damage: 24, headMultiplier: 1.6,
     interval: 0.46, spread: 0.022, focusSpread: 0.006, pellets: 1, range: 72,
-    recoil: 0.34, automatic: false, projectile: false, fireMode: 'HOLD + RELEASE / ARROW',
+    recoil: 0.34, automatic: false, projectile: false,
     accent: 0xc89d57, casing: 0xc89d57, sound: 'shortbow',
   },
   ember: {
     id: 'ember', asset: 'ember-gauntlet', name: 'EMBER GAUNTLET', shortName: 'EMBER',
     ammo: 6, reserve: 24, reloadMs: 1800, damage: 15, headMultiplier: 1.2,
     interval: 0.72, spread: 0.082, focusSpread: 0.058, pellets: 5, range: 28,
-    recoil: 0.86, automatic: false, projectile: false, fireMode: 'CONE / EMBER',
+    recoil: 0.86, automatic: false, projectile: false,
     accent: 0xf26d2f, casing: 0xf26d2f, sound: 'ember',
   },
   crossbow: {
     id: 'crossbow', asset: 'crossbow', name: 'OAKEN CROSSBOW', shortName: 'CROSSBOW',
     ammo: 1, reserve: 15, reloadMs: 1200, damage: 66, headMultiplier: 1.55,
     interval: 1.16, spread: 0.006, focusSpread: 0.0018, pellets: 1, range: 112,
-    recoil: 0.82, automatic: false, projectile: false, fireMode: 'SINGLE / BOLT',
+    recoil: 0.82, automatic: false, projectile: false,
     accent: 0x9f6f3e, casing: 0x9f6f3e, sound: 'crossbow',
   },
   lightning: {
     id: 'lightning', asset: 'lightning-wand', name: 'STORM WAND', shortName: 'STORM WAND',
     ammo: 8, reserve: 32, reloadMs: 1650, damage: 20, headMultiplier: 1.35,
     interval: 0.16, spread: 0.016, focusSpread: 0.006, pellets: 1, range: 86,
-    recoil: 0.38, automatic: true, projectile: false, fireMode: 'CHANNEL / LIGHTNING',
+    recoil: 0.38, automatic: true, projectile: false,
     accent: 0x71c9ff, casing: 0x71c9ff, sound: 'lightning',
   },
   longbow: {
@@ -46,7 +48,7 @@ export const WEAPONS = Object.freeze({
     viewmodelFrames: Object.freeze({ reload: 0 }),
     damage: 54, headMultiplier: 1.75,
     interval: 0.98, spread: 0.009, focusSpread: 0.002, pellets: 1, range: 126,
-    recoil: 0.66, automatic: false, projectile: false, fireMode: 'HOLD + RELEASE / ARROW',
+    recoil: 0.66, automatic: false, projectile: false,
     accent: 0xb88d50, casing: 0xb88d50, sound: 'longbow',
   },
   greatsword: {
@@ -55,7 +57,7 @@ export const WEAPONS = Object.freeze({
     viewmodelFrames: Object.freeze({ fire: 6, reload: 0 }),
     damage: 78, headMultiplier: 1,
     interval: 0.82, spread: 0.06, focusSpread: 0.04, pellets: 1, range: 3.55,
-    recoil: 1.18, automatic: false, projectile: false, fireMode: 'SWING / FOAM',
+    recoil: 1.18, automatic: false, projectile: false,
     accent: 0xd9dde0, casing: 0xd9dde0, sound: 'greatsword',
   },
   fireball: {
@@ -63,7 +65,7 @@ export const WEAPONS = Object.freeze({
     ammo: 3, reserve: 9, reloadMs: 2400, damage: 86, headMultiplier: 1,
     interval: 0.96, spread: 0.004, focusSpread: 0.002, pellets: 1, range: 90,
     recoil: 1.28, automatic: false, projectile: true, projectileSpeed: 25,
-    splashRadius: 5.6, fireMode: 'CAST / FIREBALL', accent: 0xff6a2f,
+    splashRadius: 5.6, accent: 0xff6a2f,
     casing: 0xff6a2f, sound: 'fireball',
   },
 });

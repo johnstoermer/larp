@@ -1,9 +1,19 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { shouldShowWarRespawnClass } from '../src/game/Interface.js';
 
 const stylesPath = new URL('../src/styles.css', import.meta.url);
+const htmlPath = new URL('../index.html', import.meta.url);
+const interfacePath = new URL('../src/game/Interface.js', import.meta.url);
+const gamePath = new URL('../src/game/Game.js', import.meta.url);
 const styles = readFileSync(stylesPath, 'utf8');
+const html = readFileSync(htmlPath, 'utf8');
+const visibleUiSources = [
+  html,
+  readFileSync(interfacePath, 'utf8'),
+  readFileSync(gamePath, 'utf8'),
+].join('\n');
 
 const chromeProperties = new Set([
   'backdrop-filter',
@@ -100,7 +110,7 @@ test('98.css remains the sole chrome source for standard UI primitives', () => {
 
   assertLibraryOwnsChrome(
     'Windows',
-    /(?:^|[ >])(?:\.window|\.title-copy|\.title-format|\.title-controls|\.lobby-shell|\.match-header|\.status-panel|#pickup-toast|\.pause-box|\.result-copy|\.connection-window)(?:\.window)?(?:::[\w-]+)?$/,
+    /(?:^|[ >])(?:\.window|\.title-copy|\.title-controls|\.lobby-shell|\.match-header|\.player-status|#announcement|\.pause-box|\.result-copy|\.connection-window|\.desktop-warning-window|\.error-window)(?:\.[\w-]+)*(?:::[\w-]+)?$/,
   );
   assertLibraryOwnsChrome(
     'Buttons',
@@ -108,11 +118,105 @@ test('98.css remains the sole chrome source for standard UI primitives', () => {
   );
   assertLibraryOwnsChrome(
     'Text inputs and selects',
-    /(?:\.callsign-field|\.join-room) input(?::[\w()-]+)*$|\.performance-control select(?::[\w()-]+)*$/,
+    /(?:\.callsign-field|\.join-controls) input(?::[\w()-]+)*$|(?:\.performance-control|\.mode-field|\.war-class-field|\.war-respawn-class-field) select(?::[\w()-]+)*$/,
   );
   assertLibraryOwnsChrome(
     'Title bars',
     /(?:^|[ >])\.title-bar(?:\.[\w-]+)*(?::[\w()-]+)*$/,
     ['padding'],
   );
+});
+
+test('all live UI surfaces use 98.css structures and the HUD stays minimal', () => {
+  const requiredWindows = [
+    /class="title-copy window"/,
+    /class="lobby-shell window"/,
+    /class="match-header window"/,
+    /id="announcement" class="window hidden"/,
+    /class="player-status health-panel window"/,
+    /class="pause-box window"/,
+    /class="result-copy window"/,
+    /class="connection-window window"/,
+    /class="desktop-warning-window window"/,
+    /class="error-window window"/,
+  ];
+  for (const pattern of requiredWindows) assert.match(html, pattern);
+
+  for (const removedId of [
+    'arena-label',
+    'fire-mode',
+    'movement-state',
+    'network-mode',
+    'pickup-toast',
+    'result-kicker',
+    'title-format',
+    'weapon-name',
+  ]) {
+    assert.doesNotMatch(html, new RegExp(`id="${removedId}"`));
+  }
+
+  assert.doesNotMatch(visibleUiSources, /showPickup\s*\(/);
+  assert.doesNotMatch(styles, /cover\.webp/i);
+  assert.match(html, /<option value="arena">Arena \(1v1\)<\/option>/);
+  assert.match(html, /<option value="war">War \(40v40\)<\/option>/);
+  for (const classId of [
+    'knives', 'shortbow', 'ember', 'crossbow',
+    'lightning', 'longbow', 'greatsword', 'fireball',
+  ]) {
+    assert.equal(
+      [...html.matchAll(new RegExp(`<option value="${classId}">`, 'g'))].length,
+      2,
+      `${classId} must be available before joining and for the next spawn`,
+    );
+  }
+  assert.match(
+    html,
+    /id="war-respawn-class-field" class="war-respawn-class-field field-row-stacked hidden"/,
+  );
+  assert.match(html, /<span>Next class<\/span>\s*<select id="war-respawn-class">/);
+  assert.match(visibleUiSources, /type: 'war_select_class', classId/);
+  assert.match(html, /id="war-capture" class="progress-indicator segmented hidden"/);
+  assert.match(
+    html,
+    /<span>Red<\/span><strong id="war-red-score">0%<\/strong>[\s\S]*?<strong id="war-blue-score">0%<\/strong><span>Blue<\/span>/,
+  );
+  assert.doesNotMatch(styles, /\.war-score\s*>\s*div:nth-child\(3\)/);
+  assert.match(visibleUiSources, /this\.arenaActions\.classList\.toggle\('hidden', war\)/);
+  assert.equal(
+    [...visibleUiSources.matchAll(/this\.warTeam === 0 \? 'Red Team' : 'Blue Team'/g)].length,
+    2,
+    'team 0 must be Red and team 1 Blue in both War match and result labels',
+  );
+  assert.doesNotMatch(visibleUiSources, /this\.warTeam === 0 \? 'Blue Team' : 'Red Team'/);
+  assert.doesNotMatch(
+    visibleUiSources,
+    /BATTLE VILLAGE|QUESTMASTER|REALM|RUNE|RELIC|TAKE SECURED|TAKE CONCEDED|BODY LOST|LAST CHAMPION|FIELD MANUAL|MARSHAL|PORTAL DID NOT OPEN|THROW\s*\/\s*FOAM|SWING\s*\/\s*FOAM|FIND A RIVAL|NEIGHBOR/i,
+  );
+});
+
+test('War next-class control is limited to the respawn window', () => {
+  assert.equal(shouldShowWarRespawnClass(false, { dead: true }), false);
+  assert.equal(shouldShowWarRespawnClass(true, { dead: false }), false);
+  assert.equal(shouldShowWarRespawnClass(true, { dead: true }), true);
+  assert.equal(shouldShowWarRespawnClass(true, null), false);
+  assert.match(
+    visibleUiSources,
+    /this\.warRespawnClassField\?\.classList\.toggle\([\s\S]*?!shouldShowWarRespawnClass\(this\.warMatch, player\)/,
+  );
+});
+
+test('conditional Arena and War rows leave no invisible layout gaps', () => {
+  const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
+  for (const selector of [
+    '#war-class-field.hidden',
+    '#arena-score.hidden',
+    '#war-score.hidden',
+    '#war-respawn-class-field.hidden',
+  ]) {
+    assert.match(
+      styles,
+      new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?display:\\s*none`),
+      `${selector} must collapse while hidden`,
+    );
+  }
 });

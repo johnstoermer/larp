@@ -39,6 +39,8 @@ remain in the local paths below; shipped runtime files live under
 | `pickups/fireball-tome.webp` | One battered office binder disguised with faux leather plus one orange cellophane LED ball. | `/Users/johnstoermer/.codex/generated_images/01a04e73-1480-7363-a5e6-8bb3d9ce2210/exec-6efab81c-34a0-40ce-bc7e-e0bf8eb947db.png` |
 | `props/hay-bales.webp` | Exactly three ordinary rectangular hay bales, stacked cleanly as a complete cutout. | `/Users/johnstoermer/.codex/generated_images/01a04e6a-e526-74d1-9fd7-26448d270181/exec-c5229e28-1008-4dd4-8b24-a56c51ce87b4.png` |
 | `props/wooden-cart.webp` | Plausible weathered two-wheel hand cart: continuous axle, two visible hubs, and two separate open shafts. | `/Users/johnstoermer/.codex/generated_images/01a04e73-1480-7363-a5e6-8bb3d9ce2210/exec-5ec2c3fb-dab8-4025-ae8e-e4d124ec602c.png` |
+| `war/tree.webp` | One complete, roughly radial deciduous tree with full trunk and canopy, direct-flash 2010 phone-photo texture, isolated and re-padded for crossed planes. | `/Users/johnstoermer/.codex/generated_images/01a04e6a-e526-74d1-9fd7-26448d270181/exec-b7ee5519-284d-4bd7-8a6f-1cedaf85c24d.png` |
+| `war/bush.webp` | One complete, roughly radial scrub bush, direct-flash 2010 phone-photo texture, isolated and re-padded for crossed planes. | `/Users/johnstoermer/.codex/generated_images/01a04e6a-e526-74d1-9fd7-26448d270181/exec-3b95f8fd-af5c-4893-9ccc-6b75a942c348.png` |
 
 ## First-person sequences
 
@@ -218,12 +220,25 @@ to 82% and bottom-anchored to clear the 12% side-framing gate.
 | `viewmodels/lightning-wand-*` | Midnight-blue velvet sleeves with narrow self-bound cuffs; warm-tan hands; one gray/blue taped wand with three LEDs and four foil fins. | `/Users/johnstoermer/.codex/generated_images/01a04f1f-7636-7fb2-9b53-246db2cacbb6/retained-lightning-wand-idle-transparent.png`; same directory `retained3-lightning-wand-{fire-1,fire-2,fire-3,reload-1,reload-2,reload-3}-transparent.png` |
 | `viewmodels/greatsword-*` | Navy tee sleeves; black faux-leather bracers; one broad silver EVA-foam sword in a two-handed left-to-right sweep. | `/Users/johnstoermer/.codex/generated_images/01a04f1f-88c7-7870-aceb-8d5b7985e931/greatsword-{idle,fire-1,fire-2,fire-3,fire-4,fire-5,fire-6}-candidate.png` |
 
+`viewmodels/shortbow-draw-3.webp` received one later precise-object correction
+using `shortbow-draw-2.webp` as the construction reference. Imagegen was asked
+to preserve the full-draw pose and continuity master while moving the black
+blunt foam tip from the rear/draw-hand end to the forward/bow-side end of the
+single attached arrow. The accepted built-in source used a flat chroma field
+and is retained at
+`/Users/johnstoermer/.codex/generated_images/01a04f92-f693-77f2-9be3-ce205c00fd01/exec-58f8eda3-8750-4546-b0ab-9610959c3391.png`;
+its soft-matted alpha source is retained beside it as
+`shortbow-draw-3-tip-fixed-alpha.png`.
+
 The shortbow is intentionally ammo-free at runtime and has no reload frames.
 Its three draw poses retain one attached blunt arrow; all three fire poses are
 post-release and contain no arrow. Lightning fire poses contain only physical
 hand recoil around the retained wand, with no bolt, glow, or detached effect.
 The ember gem is physically mounted on the palm: it is visible in ready/reload
 poses, while every post-release fire pose shows the gemless back of the glove.
+Throwing knives are also ammo-free at runtime: holding primary fire repeats the
+three fire poses once per second, and the retained reload photographs are never
+registered by the viewmodel controller.
 The greatsword sequence is ammo-free and projectile-free. Its six photographs
 stage a far-left windup, center crossing/contact, and far-right follow-through;
 the runtime adds a matching monotonic screen-space sweep instead of gun recoil.

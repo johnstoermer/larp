@@ -1,4 +1,4 @@
-export const LARP_ASSET_REVISION = 'photo-v3-20260829';
+export const LARP_ASSET_REVISION = 'photo-v4-20260829';
 
 /**
  * Stable public filenames were previously served as immutable for a year.

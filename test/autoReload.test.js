@@ -58,7 +58,7 @@ test('firing an empty weapon starts a local practice reload', () => {
   assert.deepEqual(calls.reload, [false]);
   assert.equal(game.player.reloading, true);
   assert.equal(calls.dryFire, 0);
-  assert.deepEqual(calls.notices, ['RELOADING']);
+  assert.deepEqual(calls.notices, []);
   assert.deepEqual(calls.network, []);
 });
 
@@ -70,12 +70,12 @@ test('firing an empty weapon online requests an authoritative reload', () => {
   assert.deepEqual(calls.reload, [true]);
   assert.equal(game.player.reloading, true);
   assert.equal(calls.dryFire, 0);
-  assert.deepEqual(calls.notices, ['RELOADING']);
+  assert.deepEqual(calls.notices, []);
   assert.deepEqual(calls.network, [{ type: 'reload' }]);
 });
 
-test('ammo-free bows and greatsword never auto-reload', () => {
-  for (const weapon of ['shortbow', 'longbow', 'greatsword']) {
+test('ammo-free knives, bows, and greatsword never auto-reload', () => {
+  for (const weapon of ['knives', 'shortbow', 'longbow', 'greatsword']) {
     const { game, calls } = emptyWeaponGame({ weapon, reserve: 8 });
 
     game.firePlayerWeapon();

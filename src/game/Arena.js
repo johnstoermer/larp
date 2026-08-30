@@ -1,5 +1,8 @@
 import * as THREE from 'three';
-import { MAPS as NETWORK_MAPS } from '../../server/multiplayer/config.js';
+import {
+  BATTLE_VILLAGE_PROP_COLLIDERS,
+  MAPS as NETWORK_MAPS,
+} from '../../server/multiplayer/config.js';
 import { clamp, seededRandom } from './math.js';
 import { loadPhotoTexture } from './photoTexture.js';
 
@@ -39,6 +42,147 @@ function boxFromBounds(bounds) {
   );
 }
 
+export const PHOTO_PROP_MINIMUM_GAP = 0.75;
+export const TITLE_ATTRACT_PROP_EXCLUSION_BOUNDS = Object.freeze([9, -5.6, 17.4, 0.45]);
+
+// Visible cover remains exactly where the gameplay map originally placed it.
+// Each photograph now has an unrelated, fixed world position and a separate
+// invisible physical footprint. A camera may never translate these records.
+export const PHOTO_PROP_LAYOUTS = Object.freeze([
+  {
+    file: 'wooden-cart',
+    name: 'central-wooden-cart',
+    coverName: 'central-cart-cover',
+    material: 'timber',
+    coverBounds: [-2, 0, -1.2, 2, 1.9, 1.2],
+    position: [-17, 0, 3],
+    collisionBounds: BATTLE_VILLAGE_PROP_COLLIDERS['central-wooden-cart'],
+    width: 5.3,
+    height: 3.55,
+    visibleBottomRatio: 105 / 512,
+  },
+  {
+    file: 'hay-bales',
+    name: 'west-hay-bales',
+    coverName: 'west-hay-cover',
+    material: 'hay',
+    coverBounds: [-7.1, 0, -3.7, -4.1, 1.45, -1.5],
+    position: [-11.5, 0, 12.5],
+    collisionBounds: BATTLE_VILLAGE_PROP_COLLIDERS['west-hay-bales'],
+    width: 5.5,
+    height: 2.2,
+    visibleBottomRatio: 68 / 512,
+  },
+  {
+    file: 'hay-bales',
+    name: 'east-hay-bales',
+    coverName: 'east-hay-cover',
+    material: 'hay',
+    coverBounds: [4.1, 0, 1.5, 7.1, 1.45, 3.7],
+    position: [11.5, 0, -12.5],
+    collisionBounds: BATTLE_VILLAGE_PROP_COLLIDERS['east-hay-bales'],
+    width: 5.5,
+    height: 2.2,
+    visibleBottomRatio: 68 / 512,
+  },
+  {
+    file: 'canvas-tent',
+    name: 'red-flank-tent',
+    coverName: 'red-flank-tent-cover',
+    material: 'canvas',
+    coverBounds: [-18.3, 0, -11.1, -15.1, 2.35, -7.5],
+    position: [-11, 0, -13],
+    collisionBounds: BATTLE_VILLAGE_PROP_COLLIDERS['red-flank-tent'],
+    width: 4.8,
+    height: 3.2,
+    visibleBottomRatio: 11 / 427,
+  },
+  {
+    file: 'canvas-tent',
+    name: 'blue-flank-tent',
+    coverName: 'blue-flank-tent-cover',
+    material: 'canvas',
+    coverBounds: [15.1, 0, 7.5, 18.3, 2.35, 11.1],
+    position: [11, 0, 13],
+    collisionBounds: BATTLE_VILLAGE_PROP_COLLIDERS['blue-flank-tent'],
+    width: 4.8,
+    height: 3.2,
+    visibleBottomRatio: 11 / 427,
+  },
+  {
+    file: 'archery-target',
+    name: 'west-archery-target',
+    coverName: 'west-archery-cover',
+    material: 'timber',
+    coverBounds: [-15.7, 0, 7.1, -14.1, 2.15, 8.1],
+    position: [-18, 0, 13.5],
+    collisionBounds: BATTLE_VILLAGE_PROP_COLLIDERS['west-archery-target'],
+    width: 2.4,
+    height: 2.85,
+    visibleBottomRatio: 15 / 640,
+  },
+  {
+    file: 'archery-target',
+    name: 'east-archery-target',
+    coverName: 'east-archery-cover',
+    material: 'timber',
+    coverBounds: [14.1, 0, -8.1, 15.7, 2.15, -7.1],
+    position: [18, 0, -14],
+    collisionBounds: BATTLE_VILLAGE_PROP_COLLIDERS['east-archery-target'],
+    width: 2.4,
+    height: 2.85,
+    visibleBottomRatio: 15 / 640,
+  },
+]);
+
+// A Sprite turns only its presentation plane toward the camera. Its world
+// position remains fixed, so the swept horizontal footprint is a circle. This
+// conservative square contains that circle for geometry audits.
+export function photoPropFootprintBounds(layout) {
+  const halfX = layout.width / 2;
+  const halfZ = halfX;
+  return [
+    layout.position[0] - halfX,
+    layout.position[2] - halfZ,
+    layout.position[0] + halfX,
+    layout.position[2] + halfZ,
+  ];
+}
+
+function horizontalExtents(bounds) {
+  return bounds.length === 4
+    ? { minX: bounds[0], minZ: bounds[1], maxX: bounds[2], maxZ: bounds[3] }
+    : { minX: bounds[0], minZ: bounds[2], maxX: bounds[3], maxZ: bounds[5] };
+}
+
+export function horizontalBoundsGap(first, second) {
+  const a = horizontalExtents(first);
+  const b = horizontalExtents(second);
+  const gapX = Math.max(a.minX - b.maxX, b.minX - a.maxX, 0);
+  const gapZ = Math.max(a.minZ - b.maxZ, b.minZ - a.maxZ, 0);
+  return Math.hypot(gapX, gapZ);
+}
+
+export function pointToHorizontalBoundsGap(x, z, bounds) {
+  const { minX, minZ, maxX, maxZ } = horizontalExtents(bounds);
+  return Math.hypot(
+    Math.max(minX - x, x - maxX, 0),
+    Math.max(minZ - z, z - maxZ, 0),
+  );
+}
+
+export function photoPropClearanceFromBounds(layout, bounds) {
+  return pointToHorizontalBoundsGap(layout.position[0], layout.position[2], bounds)
+    - layout.width / 2;
+}
+
+export function photoPropPairClearance(first, second) {
+  return Math.hypot(
+    first.position[0] - second.position[0],
+    first.position[2] - second.position[2],
+  ) - first.width / 2 - second.width / 2;
+}
+
 export class Arena {
   constructor(scene, renderer) {
     this.scene = scene;
@@ -48,6 +192,7 @@ export class Arena {
     this.scene.add(this.root);
     this.colliders = [];
     this.raycastMeshes = [];
+    this.photoProps = [];
     this.weaponSlots = [];
     this.navNodes = [];
     this.animationNodes = [];
@@ -58,6 +203,14 @@ export class Arena {
     this.raycaster.firstHitOnly = true;
     this.sharedGeometry = new Map();
     this.materials = this.createMaterials();
+    this.invisiblePropMaterial = new THREE.MeshBasicMaterial({
+      transparent: true,
+      opacity: 0,
+      colorWrite: false,
+      depthWrite: false,
+      depthTest: false,
+    });
+    this.invisiblePropMaterial.name = 'invisible-photo-prop-collision-material';
     this.overlapScratchA = [];
     this.overlapScratchB = [];
     this.bodyProbe = new THREE.Vector3();
@@ -120,13 +273,40 @@ export class Arena {
     }
     this.colliders.length = 0;
     this.raycastMeshes.length = 0;
+    this.photoProps.length = 0;
     this.weaponSlots.length = 0;
     this.navNodes.length = 0;
     this.animationNodes.length = 0;
     this.dynamicLights.length = 0;
   }
 
+  disposeSunShadow() {
+    const shadow = this.sun?.shadow;
+    if (!shadow) return;
+    const targets = new Set([shadow.map, shadow.mapPass].filter(Boolean));
+    for (const target of targets) target.dispose?.();
+    shadow.map = null;
+    shadow.mapPass = null;
+    this.sun = null;
+  }
+
+  dispose() {
+    this.disposeSunShadow();
+    this.clear();
+    this.scene.remove(this.root);
+    for (const material of new Set(Object.values(this.materials))) material.dispose();
+    this.invisiblePropMaterial.dispose();
+    for (const geometry of this.sharedGeometry.values()) geometry.dispose();
+    this.sharedGeometry.clear();
+  }
+
+  activateEnvironment() {
+    this.scene.background = new THREE.Color(this.map.background);
+    this.scene.fog = new THREE.FogExp2(this.map.fog, this.map.fogDensity);
+  }
+
   load(index, seed = 1) {
+    this.disposeSunShadow();
     this.clear();
     this.mapIndex = ((index % MAPS.length) + MAPS.length) % MAPS.length;
     this.map = MAPS[this.mapIndex];
@@ -138,8 +318,7 @@ export class Arena {
       return collider;
     });
 
-    this.scene.background = new THREE.Color(this.map.background);
-    this.scene.fog = new THREE.FogExp2(this.map.fog, this.map.fogDensity);
+    this.activateEnvironment();
     const hemisphere = new THREE.HemisphereLight(this.map.hemiSky, this.map.hemiGround, 2.35);
     this.root.add(hemisphere);
     const ambient = new THREE.AmbientLight(0xd5dfca, 1.15);
@@ -213,12 +392,45 @@ export class Arena {
     });
     material.userData.temporary = true;
     const sprite = new THREE.Sprite(material);
+    const visibleBottomRatio = options.visibleBottomRatio ?? 0;
     sprite.name = `individual-photo-prop-${name}`;
     sprite.position.set(position[0], position[1] + 0.02, position[2]);
-    sprite.center.set(0.5, options.centerY ?? 0.02);
+    sprite.center.set(0.5, visibleBottomRatio);
     sprite.scale.set(width, height, 1);
     this.root.add(sprite);
+    const record = {
+      sprite,
+      position: [...position],
+      collisionBounds: options.collisionBounds,
+      coverBounds: options.coverBounds,
+      footprintBounds: options.footprintBounds,
+      visibleBottomRatio,
+      collisionProxy: null,
+    };
+    this.photoProps.push(record);
     return sprite;
+  }
+
+  addInvisiblePropCollision(bounds, name) {
+    const size = [
+      bounds[3] - bounds[0],
+      bounds[4] - bounds[1],
+      bounds[5] - bounds[2],
+    ];
+    const mesh = new THREE.Mesh(this.geometry(size), this.invisiblePropMaterial);
+    mesh.position.set(
+      (bounds[0] + bounds[3]) / 2,
+      (bounds[1] + bounds[4]) / 2,
+      (bounds[2] + bounds[5]) / 2,
+    );
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    mesh.name = `invisible-photo-prop-collision-${name}`;
+    mesh.userData.invisiblePropCollision = true;
+    mesh.userData.bounds = bounds;
+    this.root.add(mesh);
+    this.raycastMeshes.push(mesh);
+    return mesh;
   }
 
   addHouse(team, zCenter) {
@@ -304,26 +516,29 @@ export class Arena {
     this.addHouse('red', -11.25);
     this.addHouse('blue', 11.25);
 
-    this.addBoundsVisual([-2, 0, -1.2, 2, 1.9, 1.2], 'timber', 'central-cart-cover');
-    this.addPropSprite('wooden-cart', [0, 0, 0], 4.7, 3.0, 'central-wooden-cart');
-
-    this.addBoundsVisual([-7.1, 0, -3.7, -4.1, 1.45, -1.5], 'hay', 'west-hay-cover');
-    this.addPropSprite('hay-bales', [-5.6, 0, -2.6], 3.65, 2.45, 'west-hay-bales');
-    this.addBoundsVisual([4.1, 0, 1.5, 7.1, 1.45, 3.7], 'hay', 'east-hay-cover');
-    this.addPropSprite('hay-bales', [5.6, 0, 2.6], 3.65, 2.45, 'east-hay-bales');
-
     this.addBoundsVisual([-16.2, 0, -2.9, -11.6, 1.8, -1.7], 'hedge', 'west-lane-hedge');
     this.addBoundsVisual([11.6, 0, 1.7, 16.2, 1.8, 2.9], 'hedge', 'east-lane-hedge');
 
-    this.addBoundsVisual([-18.3, 0, -11.1, -15.1, 2.35, -7.5], 'canvas', 'red-flank-tent-cover');
-    this.addPropSprite('canvas-tent', [-16.7, 0, -9.3], 4.8, 3.2, 'red-flank-tent');
-    this.addBoundsVisual([15.1, 0, 7.5, 18.3, 2.35, 11.1], 'canvas', 'blue-flank-tent-cover');
-    this.addPropSprite('canvas-tent', [16.7, 0, 9.3], 4.8, 3.2, 'blue-flank-tent');
-
-    this.addBoundsVisual([-15.7, 0, 7.1, -14.1, 2.15, 8.1], 'timber', 'west-archery-cover');
-    this.addPropSprite('archery-target', [-14.9, 0, 7.6], 2.4, 2.85, 'west-archery-target');
-    this.addBoundsVisual([14.1, 0, -8.1, 15.7, 2.15, -7.1], 'timber', 'east-archery-cover');
-    this.addPropSprite('archery-target', [14.9, 0, -7.6], 2.4, 2.85, 'east-archery-target');
+    for (const prop of PHOTO_PROP_LAYOUTS) {
+      this.addBoundsVisual(prop.coverBounds, prop.material, prop.coverName);
+      this.addPropSprite(
+        prop.file,
+        prop.position,
+        prop.width,
+        prop.height,
+        prop.name,
+        {
+          visibleBottomRatio: prop.visibleBottomRatio,
+          collisionBounds: prop.collisionBounds,
+          coverBounds: prop.coverBounds,
+          footprintBounds: photoPropFootprintBounds(prop),
+        },
+      );
+      this.photoProps.at(-1).collisionProxy = this.addInvisiblePropCollision(
+        prop.collisionBounds,
+        prop.name,
+      );
+    }
 
     for (const slot of this.map.pickups) this.addWeaponSlot(...slot);
     const nodes = [
@@ -388,7 +603,7 @@ export class Arena {
     this.root.add(plane);
   }
 
-  update(time, delta) {
+  update(time, delta, _cameraPosition = null) {
     for (const node of this.animationNodes) {
       if (node.type !== 'dust') continue;
       node.mesh.rotation.y += delta * 0.006;

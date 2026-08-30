@@ -12,10 +12,12 @@ const viewports = Object.freeze({
   // first-person framing and HUD clipping instead of only that notice.
   narrow: { width: 720, height: 900 },
 });
-const expectedCanonicalFrameCount = 56;
+const expectedCanonicalFrameCount = 53;
 const fighterStates = Object.freeze(['idle', 'walk', 'attack', 'hit', 'death']);
 const expectedFighterStateCount = 8 * fighterStates.length;
 const runtimeSafetyGutterRatio = 0.04;
+const bowLimbMinimumRightRatio = 0.04;
+const bowActionMinimumRightRatio = 0.075;
 const round = (value) => Math.round(value * 100) / 100;
 for (const name of Object.keys(viewports)) {
   await mkdir(new URL(`${name}/`, output), { recursive: true });
@@ -56,6 +58,7 @@ await useViewport('desktop');
 await page.evaluate(async () => {
   const game = window.__LARP_GAME__;
   await game.audio.init();
+  game.titleAttract?.stop();
   game.mode = 'visual-review';
   game.phase = 'review';
   game.ui.showHUD();
@@ -247,6 +250,8 @@ for (const viewportName of Object.keys(viewports)) {
             let minimumY = Infinity;
             let maximumX = -Infinity;
             let maximumY = -Infinity;
+            let sourceMinimumY = Infinity;
+            let sourceMaximumY = -Infinity;
             const pixelXAxisX = matrix.a * imageScale;
             const pixelXAxisY = matrix.b * imageScale;
             const pixelYAxisX = matrix.c * imageScale;
@@ -256,6 +261,8 @@ for (const viewportName of Object.keys(viewports)) {
               for (let x = 0; x < canvas.width; x += 1) {
                 if (pixels[(y * canvas.width + x) * 4 + 3] <= 16) continue;
                 opaquePixels += 1;
+                sourceMinimumY = Math.min(sourceMinimumY, y);
+                sourceMaximumY = Math.max(sourceMaximumY, y);
                 const localX = backgroundX + x * imageScale - originX;
                 const localY = backgroundY + y * imageScale - originY;
                 const screenX = layoutLeft + originX +
@@ -292,6 +299,58 @@ for (const viewportName of Object.keys(viewports)) {
                   screenY + pixelYAxisY,
                   oppositeY,
                 );
+              }
+            }
+
+            // Hands and sleeves dominate the full alpha silhouette. The upper
+            // third of an occupied bow photograph isolates the actual curved
+            // limb/string assembly, including the horizontal recovery pose.
+            // Transform that source band independently so the placement gate
+            // cannot pass merely because a forearm moved across the crosshair.
+            let bowLimbBounds = null;
+            if (
+              (weapon === 'shortbow' || weapon === 'longbow') &&
+              (state === 'draw' || state === 'fire') &&
+              Number.isFinite(sourceMinimumY) &&
+              Number.isFinite(sourceMaximumY)
+            ) {
+              const bandBottom = Math.min(
+                canvas.height - 1,
+                Math.ceil(sourceMinimumY + (sourceMaximumY - sourceMinimumY) * 0.32),
+              );
+              let limbMinimumX = Infinity;
+              let limbMaximumX = -Infinity;
+              for (let y = Math.floor(sourceMinimumY); y <= bandBottom; y += 1) {
+                for (let x = 0; x < canvas.width; x += 1) {
+                  if (pixels[(y * canvas.width + x) * 4 + 3] <= 16) continue;
+                  const localX = backgroundX + x * imageScale - originX;
+                  const localY = backgroundY + y * imageScale - originY;
+                  const screenX = layoutLeft + originX +
+                    matrix.a * localX + matrix.c * localY + matrix.e;
+                  const oppositeX = screenX + pixelXAxisX + pixelYAxisX;
+                  limbMinimumX = Math.min(
+                    limbMinimumX,
+                    screenX,
+                    screenX + pixelXAxisX,
+                    screenX + pixelYAxisX,
+                    oppositeX,
+                  );
+                  limbMaximumX = Math.max(
+                    limbMaximumX,
+                    screenX,
+                    screenX + pixelXAxisX,
+                    screenX + pixelYAxisX,
+                    oppositeX,
+                  );
+                }
+              }
+              if (Number.isFinite(limbMinimumX) && Number.isFinite(limbMaximumX)) {
+                bowLimbBounds = {
+                  left: round(limbMinimumX),
+                  right: round(limbMaximumX),
+                  center: round((limbMinimumX + limbMaximumX) / 2),
+                  sourceBand: [Math.floor(sourceMinimumY), bandBottom],
+                };
               }
             }
 
@@ -337,6 +396,10 @@ for (const viewportName of Object.keys(viewports)) {
                 left: minimumX / innerWidth,
                 right: (innerWidth - maximumX) / innerWidth,
               } : null,
+              bowLimbBounds,
+              actionOffsetX: Number.parseFloat(
+                style.getPropertyValue('--vm-action-x'),
+              ),
               requiredMargins,
               layout: {
                 element: {
@@ -406,7 +469,7 @@ const mapShots = [
 ];
 
 const weaponShots = [
-  ['knives', ['idle', 'fire', 'reload']],
+  ['knives', ['idle', 'fire']],
   ['shortbow', ['idle', 'draw', 'fire']],
   ['ember', ['idle', 'fire', 'reload']],
   ['crossbow', ['idle', 'fire', 'reload']],
@@ -477,6 +540,9 @@ const representativeAnimationShots = [
   ['lightning', 'fire'],
   ['crossbow', 'reload'],
   ['shortbow', 'draw'],
+  ['shortbow', 'fire'],
+  ['longbow', 'draw'],
+  ['longbow', 'fire'],
 ].flatMap(([weapon, state]) => [1, 2, 3].map((frame) => ({ weapon, state, frame, total: 3 })));
 representativeAnimationShots.push(
   ...[1, 2, 3, 4, 5, 6].map((frame) => ({
@@ -487,37 +553,45 @@ representativeAnimationShots.push(
   })),
 );
 for (const entry of representativeAnimationShots) {
-  await useViewport('desktop');
-  await page.evaluate((animationEntry) => {
-    const game = window.__LARP_GAME__;
-    const player = game.player;
-    player.position.set(-8.5, 0, 8);
-    player.velocity.set(0, 0, 0);
-    player.yaw = -0.55;
-    player.pitch = -0.08;
-    player.dead = false;
-    player.viewRoot.visible = true;
-    player.equip(animationEntry.weapon, false);
-    player.shotFrameTime = animationEntry.state === 'fire' ? 0.1 : 0;
-    player.bowDrawTime = animationEntry.state === 'draw' ? 0.36 : 0;
-    player.reloading = animationEntry.state === 'reload';
-    player.reloadDuration = animationEntry.state === 'reload' ? 1 : 0;
-    player.reloadRemaining = animationEntry.state === 'reload' ? 0.5 : 0;
-    player.updateView(0, {
-      moving: false,
-      speed: 0,
-      sprinting: false,
-      sliding: false,
-      wallRunning: false,
-    });
-    player.setViewmodelAnimationProgress(
-      animationEntry.state,
-      (animationEntry.frame - 0.5) / animationEntry.total,
+  const animationViewports = entry.weapon === 'shortbow' || entry.weapon === 'longbow'
+    ? Object.keys(viewports)
+    : ['desktop'];
+  for (const viewportName of animationViewports) {
+    await useViewport(viewportName);
+    await page.evaluate((animationEntry) => {
+      const game = window.__LARP_GAME__;
+      const player = game.player;
+      player.position.set(-8.5, 0, 8);
+      player.velocity.set(0, 0, 0);
+      player.yaw = -0.55;
+      player.pitch = -0.08;
+      player.dead = false;
+      player.viewRoot.visible = true;
+      player.equip(animationEntry.weapon, false);
+      player.shotFrameTime = animationEntry.state === 'fire' ? 0.1 : 0;
+      player.bowDrawTime = animationEntry.state === 'draw' ? 0.36 : 0;
+      player.reloading = animationEntry.state === 'reload';
+      player.reloadDuration = animationEntry.state === 'reload' ? 1 : 0;
+      player.reloadRemaining = animationEntry.state === 'reload' ? 0.5 : 0;
+      player.updateView(0, {
+        moving: false,
+        speed: 0,
+        sprinting: false,
+        sliding: false,
+        wallRunning: false,
+      });
+      player.setViewmodelAnimationProgress(
+        animationEntry.state,
+        (animationEntry.frame - 0.5) / animationEntry.total,
+      );
+      player.syncCamera(0.5);
+      game.updateHUD();
+    }, entry);
+    await capture(
+      `animation-${entry.weapon}-${entry.state}-${entry.frame}`,
+      viewportName,
     );
-    player.syncCamera(0.5);
-    game.updateHUD();
-  }, entry);
-  await capture(`animation-${entry.weapon}-${entry.state}-${entry.frame}`, 'desktop');
+  }
 }
 
 const fighterReport = [];
@@ -670,6 +744,36 @@ const invalidGreatswordSweeps = Object.entries(greatswordSweepReport).filter(
     report.frames.some((frame, index) =>
       index > 0 && frame.centerX <= report.frames[index - 1].centerX),
 );
+const bowSidePlacementReport = runtimeViewmodelFrames
+  .filter((entry) =>
+    (entry.weapon === 'shortbow' || entry.weapon === 'longbow') &&
+    (entry.state === 'draw' || entry.state === 'fire'))
+  .map((entry) => {
+    const crosshairX = entry.viewportSize[0] / 2;
+    const limbOffset = entry.bowLimbBounds?.center - crosshairX;
+    return {
+      case: entry.case,
+      limbBounds: entry.bowLimbBounds,
+      crosshairX,
+      limbOffset: round(limbOffset),
+      limbOffsetRatio: limbOffset / entry.viewportSize[0],
+      actionOffsetX: entry.actionOffsetX,
+      actionOffsetRatio: entry.actionOffsetX / entry.viewportSize[0],
+    };
+  });
+const expectedBowSidePlacementCases = 2 * 2 * 3 * Object.keys(viewports).length;
+const invalidBowSidePlacements = bowSidePlacementReport.filter((entry) =>
+  !entry.limbBounds ||
+  !Number.isFinite(entry.limbOffsetRatio) ||
+  entry.limbOffsetRatio < bowLimbMinimumRightRatio ||
+  !Number.isFinite(entry.actionOffsetRatio) ||
+  entry.actionOffsetRatio < bowActionMinimumRightRatio
+);
+const shiftedBowIdleFrames = runtimeViewmodelFrames.filter((entry) =>
+  (entry.weapon === 'shortbow' || entry.weapon === 'longbow') &&
+  entry.state === 'idle' &&
+  entry.actionOffsetX !== 0
+);
 if (
   runtimeViewmodelFrames.length !== expectedRuntimeViewmodelCases ||
   uniqueRuntimeViewmodelCases.size !== expectedRuntimeViewmodelCases ||
@@ -698,6 +802,26 @@ if (invalidGreatswordSweeps.length) {
   throw new Error(
     `Greatsword runtime poses do not form one broad left-to-right sweep: ` +
     JSON.stringify(greatswordSweepReport),
+  );
+}
+if (
+  bowSidePlacementReport.length !== expectedBowSidePlacementCases ||
+  invalidBowSidePlacements.length ||
+  shiftedBowIdleFrames.length
+) {
+  throw new Error(
+    `Bow limbs must remain right of the crosshair in every active frame while idle stays fixed: ` +
+    JSON.stringify({
+      expectedCases: expectedBowSidePlacementCases,
+      actualCases: bowSidePlacementReport.length,
+      minimumLimbOffsetRatio: bowLimbMinimumRightRatio,
+      minimumActionOffsetRatio: bowActionMinimumRightRatio,
+      failures: invalidBowSidePlacements,
+      shiftedIdle: shiftedBowIdleFrames.map((entry) => ({
+        case: entry.case,
+        actionOffsetX: entry.actionOffsetX,
+      })),
+    }),
   );
 }
 if (edgeReport.some((entry) =>
@@ -740,7 +864,7 @@ const assetRequestReport = await page.evaluate(() =>
     })),
 );
 const unversionedAssetRequests = assetRequestReport.filter(
-  (entry) => entry.revision !== 'photo-v3-20260829',
+  (entry) => entry.revision !== 'photo-v4-20260829',
 );
 if (unversionedAssetRequests.length) {
   throw new Error(`Unversioned LARP artwork requests: ${JSON.stringify(unversionedAssetRequests)}`);
@@ -759,6 +883,7 @@ await writeFile(
     maximumRuntimeViewmodelBottomGap,
     minimumRuntimeViewmodelVisibleHeight,
     greatswordSweepReport,
+    bowSidePlacementReport,
     representativeAnimationShots,
     edgeReport,
     expectedFighterStateCount,
@@ -783,6 +908,7 @@ console.log(JSON.stringify({
   maximumRuntimeViewmodelBottomGap,
   minimumRuntimeViewmodelVisibleHeight,
   greatswordSweepReport,
+  bowSidePlacementReport,
   minimumViewmodelMargins: edgeReport.reduce(
     (minimums, entry) => ({
       top: Math.min(minimums.top, entry.margins.top),

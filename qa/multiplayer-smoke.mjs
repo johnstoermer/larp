@@ -161,6 +161,33 @@ try {
     usesAmmo: window.__LARP_GAME__.player.definition.usesAmmo !== false,
     sequence: window.__LARP_GAME__.onlineShotSequence,
   }));
+  const expectedRemoteShot = {
+    weapon: shotBefore.weapon,
+    shotId: shotBefore.sequence + 1,
+  };
+  if (!shotBefore.usesAmmo) {
+    await bravo.page.evaluate((expected) => {
+      const game = window.__LARP_GAME__;
+      window.__LARP_QA_REMOTE_SHOT__ = null;
+      const recordRemoteShot = (event) => {
+        const message = event.detail;
+        if (
+          message?.event !== 'shot' ||
+          message.shooter === game.onlineSlot ||
+          message.weapon !== expected.weapon ||
+          message.shotId !== expected.shotId
+        ) {
+          return;
+        }
+        window.__LARP_QA_REMOTE_SHOT__ = {
+          weapon: message.weapon,
+          shotId: message.shotId,
+        };
+        game.network.removeEventListener('event', recordRemoteShot);
+      };
+      game.network.addEventListener('event', recordRemoteShot);
+    }, expectedRemoteShot);
+  }
   await alpha.page.mouse.down();
   if (shotBefore.weapon === 'shortbow' || shotBefore.weapon === 'longbow') {
     await alpha.page.waitForFunction(
@@ -169,7 +196,13 @@ try {
       { timeout: 3000 },
     );
   } else {
-    await alpha.page.waitForTimeout(120);
+    // Keep automatic weapons held until a render tick consumes the input.
+    // A fixed sleep can elapse without a frame when the full QA suite is busy.
+    await alpha.page.waitForFunction(
+      (before) => window.__LARP_GAME__.onlineShotSequence > before,
+      shotBefore.sequence,
+      { timeout: 5000 },
+    );
   }
   await alpha.page.mouse.up();
   await alpha.page.waitForFunction(
@@ -195,10 +228,10 @@ try {
       { timeout: 5000 },
     );
     await bravo.page.waitForFunction(
-      (weapon) =>
-        window.__LARP_GAME__.bot.weaponType === weapon &&
-        window.__LARP_GAME__.bot.attackTime > 0,
-      shotBefore.weapon,
+      (expected) =>
+        window.__LARP_QA_REMOTE_SHOT__?.weapon === expected.weapon &&
+        window.__LARP_QA_REMOTE_SHOT__?.shotId === expected.shotId,
+      expectedRemoteShot,
       { timeout: 5000 },
     );
   }

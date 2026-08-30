@@ -1,10 +1,11 @@
 import { LatencyTracker } from './LatencyTracker.js';
 
-const PROTOCOL_VERSION = 3;
+const PROTOCOL_VERSION = 4;
 const RECONNECT_DELAYS = [350, 700, 1200, 2000, 3200, 5000];
 const PING_INTERVAL_MS = 1000;
 const PING_TIMEOUT_MS = 5000;
 const MAX_REALTIME_BUFFERED_BYTES = 8192;
+const PENDING_LEAVE_KEY = 'larp-pending-leave';
 
 function websocketUrl() {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -13,9 +14,13 @@ function websocketUrl() {
 
 function shouldDropRealtimeMessage(message, bufferedAmount) {
   return (
-    message?.type === 'state' &&
+    (message?.type === 'state' || message?.type === 'war_state') &&
     Number(bufferedAmount) > MAX_REALTIME_BUFFERED_BYTES
   );
+}
+
+export function welcomeInvalidatesResume(message, resumeRequested) {
+  return Boolean(resumeRequested && message?.activeMatch === false);
 }
 
 export class NetworkClient extends EventTarget {
@@ -27,6 +32,8 @@ export class NetworkClient extends EventTarget {
     this.name = localStorage.getItem('larp-name') || '';
     this.resumeRequested =
       localStorage.getItem('larp-active-match') === '1';
+    this.pendingLeave = localStorage.getItem(PENDING_LEAVE_KEY) === '1';
+    this.closeAfterLeave = this.pendingLeave;
     this.rtt = 0;
     this.latencyTracker = new LatencyTracker();
     this.clockOffset = 0;
@@ -53,6 +60,12 @@ export class NetworkClient extends EventTarget {
     if (this.status === status && !Object.keys(detail).length) return;
     this.status = status;
     this.emit('status', { status, rtt: this.rtt, ...detail });
+  }
+
+  clearActiveMatch() {
+    this.inMatch = false;
+    this.resumeRequested = false;
+    localStorage.removeItem('larp-active-match');
   }
 
   connect(name = this.name) {
@@ -108,7 +121,12 @@ export class NetworkClient extends EventTarget {
       return;
     }
     this.lastMessageAt = performance.now();
+    let closeAfterMessage = false;
     if (message.type === 'welcome') {
+      const resumeUnavailable = welcomeInvalidatesResume(
+        message,
+        this.resumeRequested,
+      );
       this.token = message.token;
       this.name = message.name;
       localStorage.setItem('larp-session', this.token);
@@ -120,6 +138,11 @@ export class NetworkClient extends EventTarget {
       this.connectPromise = null;
       this.resolveConnect = null;
       this.rejectConnect = null;
+      if (resumeUnavailable) {
+        this.clearActiveMatch();
+        this.emit('resume_unavailable', { reason: 'not_found' });
+      }
+      if (this.pendingLeave) this.send({ type: 'leave' });
     } else if (message.type === 'pong') {
       const sequence = Number(message.sequence);
       if (!this.pendingPing || sequence !== this.pendingPing.sequence) return;
@@ -134,17 +157,28 @@ export class NetworkClient extends EventTarget {
         Number(message.serverTime || Date.now()) - Date.now() + this.rtt * 0.5;
       this.emit('latency', latency);
       this.schedulePing(PING_INTERVAL_MS);
-    } else if (message.type === 'match_found') {
+    } else if (message.type === 'match_found' || message.type === 'war_found') {
+      if (this.pendingLeave) return;
       this.inMatch = true;
       this.resumeRequested = true;
       localStorage.setItem('larp-active-match', '1');
+    } else if (
+      message.type === 'resume_status' &&
+      message.active === false &&
+      this.resumeRequested
+    ) {
+      this.clearActiveMatch();
+      this.emit('resume_unavailable', { reason: 'not_found' });
     } else if (message.type === 'left_match') {
-      this.inMatch = false;
-      this.resumeRequested = false;
-      localStorage.removeItem('larp-active-match');
+      closeAfterMessage = this.closeAfterLeave;
+      this.closeAfterLeave = false;
+      this.pendingLeave = false;
+      localStorage.removeItem(PENDING_LEAVE_KEY);
+      this.clearActiveMatch();
     }
     this.emit(message.type, message);
     this.emit('message', message);
+    if (closeAfterMessage) this.close();
   }
 
   handleClose(socket, event) {
@@ -221,23 +255,39 @@ export class NetworkClient extends EventTarget {
   }
 
   quickPlay() {
+    this.closeAfterLeave = false;
     return this.send({ type: 'quick_play' });
   }
 
+  warPlay(classId) {
+    this.closeAfterLeave = false;
+    return this.send({ type: 'war_play', classId });
+  }
+
   createPrivate() {
+    this.closeAfterLeave = false;
     return this.send({ type: 'create_private' });
   }
 
   joinPrivate(code) {
+    this.closeAfterLeave = false;
     return this.send({ type: 'join_private', code });
   }
 
   cancelQueue() {
-    return this.send({ type: 'cancel_queue' });
+    const sent = this.send({ type: 'cancel_queue' });
+    // The server also removes queues and private lobbies on disconnect. Close
+    // the now-idle title socket so abandoned lobby tabs cannot consume the
+    // finite realtime connection pool indefinitely.
+    this.close();
+    return sent;
   }
 
   leave() {
-    this.inMatch = false;
+    this.pendingLeave = true;
+    this.closeAfterLeave = true;
+    localStorage.setItem(PENDING_LEAVE_KEY, '1');
+    this.clearActiveMatch();
     return this.send({ type: 'leave' });
   }
 
@@ -257,6 +307,7 @@ export {
   MAX_REALTIME_BUFFERED_BYTES,
   PING_INTERVAL_MS,
   PING_TIMEOUT_MS,
+  PENDING_LEAVE_KEY,
   PROTOCOL_VERSION,
   shouldDropRealtimeMessage,
 };

@@ -22,7 +22,7 @@ not distorted anatomy or an artificial-looking person.
 
 Every frame, fighter, pickup, projectile, prop, effect, and surface is stored
 as its own image under `public/assets/larp/`. There are no sprite sheets,
-atlases, or multi-frame source images. The 123 active WebP files are organized
+atlases, or multi-frame source images. The 125 active WebP files are organized
 as follows:
 
 | Directory | Files | Purpose |
@@ -31,8 +31,9 @@ as follows:
 | `props/` | 4 | Individual archery target, canvas tent, hay bale, and wooden cart cutouts. |
 | `pickups/` | 8 | One isolated homemade foam, PVC, cardboard, or practical-light prop per weapon. |
 | `fighters/` | 40 | Five ordinary LARPer poses per weapon: idle, walk, attack, hit, and non-graphic death. |
-| `viewmodels/` | 56 | Three-frame ranged actions, three bow-draw frames with no bow reload assets, and a six-pose ammo-free greatsword swing. |
+| `viewmodels/` | 56 | The runtime uses 53 idle/action frames; three retained knife reload photographs are not registered because knives are ammo-free. |
 | `effects/` | 6 | Individual arrow, bolt, knife, fireball, lightning, and dust-impact photographs. |
+| `war/` | 2 | Full tree and bush alpha cutouts duplicated as fixed crossed planes in War. |
 | project root | 1 | The photographic Battle Village cover image. |
 
 The replacement fighter, pickup, prop, and cover sources were created with
@@ -87,9 +88,10 @@ sequence review additionally checks these identity anchors:
 
 ### First-person animation mapping
 
-The renderer registers 56 first-person frame slots. Every weapon uses one idle
-plus its fire poses. Five charge-based ranged weapons add three reload poses;
-the two ammo-free bows use three draw poses and no reload imagery. The
+The renderer registers 53 first-person frame slots. Every weapon uses one idle
+plus its fire poses. Four magazine-based ranged weapons add three reload poses;
+ammo-free throwing knives repeat their fire sequence once per second while held,
+the two ammo-free bows use three draw poses and no reload imagery, and the
 ammo-free greatsword uses six discrete fire poses,
 giving its broad melee arc 540 ms of readable windup, impact, follow-through,
 and recovery. Fire frames normally advance in 90 ms steps (about 11 fps), with

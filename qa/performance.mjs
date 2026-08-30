@@ -3,6 +3,9 @@ import { launchChromium } from './browser.mjs';
 
 const baseUrl = process.env.LARP_URL || 'http://127.0.0.1:8080';
 const output = new URL('../artifacts/', import.meta.url);
+// The base arena uses 30 batched cover/world ray targets. Seven relocated
+// photographic props intentionally add one independent invisible hitbox each.
+const MAX_ARENA_RAYCAST_MESHES = 37;
 await mkdir(output, { recursive: true });
 
 // Performance sampling must exercise the browser's normal GPU path. Other
@@ -158,7 +161,7 @@ try {
   if (state.canvas.width > 1920 * 1.25 || state.canvas.height > 1080 * 1.25) {
     throw new Error(`Adaptive resolution exceeded its pixel budget: ${JSON.stringify(state.canvas)}`);
   }
-  if (state.arena.raycastMeshes > 32) {
+  if (state.arena.raycastMeshes > MAX_ARENA_RAYCAST_MESHES) {
     throw new Error(`Static geometry batching regressed: ${state.arena.raycastMeshes} meshes.`);
   }
   if (state.effects.debris > 72 || state.effects.particles > 560) {

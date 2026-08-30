@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { clamp, damp, moveToward } from './math.js';
 import {
+  bowRightSideOffset,
   createViewmodelFrameSet,
   greatswordSweepForFrame,
   normalizeViewmodelState,
@@ -86,6 +87,7 @@ export class PlayerController {
     this.reloadServerControlled = false;
     this.focused = false;
     this.inputEnabled = false;
+    this.movementScale = 1;
 
     this.viewmodelLayer = document.getElementById('viewmodel-layer');
     this.viewmodelSprite = document.getElementById('viewmodel-sprite');
@@ -351,6 +353,10 @@ export class PlayerController {
   setSensitivity(value) {
     this.sensitivity = Number(value);
     localStorage.setItem('larp-sensitivity', String(this.sensitivity));
+  }
+
+  setMovementScale(value = 1) {
+    this.movementScale = clamp(Number(value) || 1, 0.6, 1.5);
   }
 
   reset(position, yaw) {
@@ -664,7 +670,13 @@ export class PlayerController {
     }
 
     if (canMove && !sliding) {
-      const targetSpeed = wantsSprint && moveZ > 0 && !this.focused ? 8.4 : this.focused ? 4.5 : 6.4;
+      const targetSpeed = (
+        wantsSprint && moveZ > 0 && !this.focused
+          ? 8.4
+          : this.focused
+            ? 4.5
+            : 6.4
+      ) * this.movementScale;
       const targetX = WISH.x * targetSpeed;
       const targetZ = WISH.z * targetSpeed;
       const acceleration = this.grounded ? (WISH.lengthSq() ? 36 : 25) : 8.5;
@@ -833,6 +845,9 @@ export class PlayerController {
         actionX = -12 * draw;
         actionY = 5 * draw;
         actionScale = 1 + draw * 0.012;
+      }
+      if (BOW_WEAPONS.has(this.weaponType)) {
+        actionX += bowRightSideOffset(frame, globalThis.innerWidth);
       }
       this.viewmodelSprite.classList.toggle('is-firing', this.shotFrameTime > 0);
       this.viewmodelSprite.classList.toggle('is-reloading', this.reloading);

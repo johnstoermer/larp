@@ -2,6 +2,10 @@ import { clamp, formatTime } from './math.js';
 
 const byId = (id) => document.getElementById(id);
 
+export function shouldShowWarRespawnClass(warMatch, player) {
+  return Boolean(warMatch && player?.dead);
+}
+
 export class Interface {
   constructor() {
     this.titleScreen = byId('title-screen');
@@ -14,6 +18,12 @@ export class Interface {
     this.onlineButton = byId('online-button');
     this.privateButton = byId('private-button');
     this.callsign = byId('callsign');
+    this.gameMode = byId('game-mode');
+    this.warClass = byId('war-class');
+    this.warClassField = byId('war-class-field');
+    this.warRespawnClass = byId('war-respawn-class');
+    this.warRespawnClassField = byId('war-respawn-class-field');
+    this.arenaActions = byId('arena-actions');
     this.resumeButton = byId('resume-button');
     this.restartButton = byId('restart-button');
     this.quitButton = byId('quit-button');
@@ -33,14 +43,12 @@ export class Interface {
     this.joinRoomButton = byId('join-room-button');
     this.queueState = byId('queue-state');
     this.queueCode = byId('queue-code');
-    this.queueMessage = byId('queue-message');
     this.copyRoomButton = byId('copy-room-button');
     this.lobbyConnectionLight = byId('lobby-connection-light');
     this.lobbyConnection = byId('lobby-connection');
     this.lobbyLatency = byId('lobby-latency');
     this.titleNetworkState = byId('title-network-state');
     this.networkMeter = byId('network-meter');
-    this.networkMode = byId('network-mode');
     this.networkPing = byId('network-ping');
     this.opponentName = byId('opponent-name');
     this.resultOpponentName = byId('result-opponent-name');
@@ -51,25 +59,24 @@ export class Interface {
     this.playerTakes = byId('player-takes');
     this.botTakes = byId('bot-takes');
     this.roundLabel = byId('round-label');
-    this.arenaLabel = byId('arena-label');
     this.timer = byId('take-timer');
+    this.arenaScore = byId('arena-score');
+    this.warScore = byId('war-score');
+    this.warRedScore = byId('war-red-score');
+    this.warBlueScore = byId('war-blue-score');
+    this.warCapture = byId('war-capture');
+    this.warCaptureFill = byId('war-capture-fill');
     this.healthValue = byId('health-value');
     this.healthFill = byId('health-fill');
     this.healthPanel = document.querySelector('.health-panel');
-    this.weaponName = byId('weapon-name');
     this.ammoValue = byId('ammo-value');
     this.ammoReserve = byId('ammo-reserve');
-    this.fireMode = byId('fire-mode');
-    this.movementState = byId('movement-state');
-    this.pickupToast = byId('pickup-toast');
-    this.pickupName = this.pickupToast.querySelector('strong');
     this.crosshair = byId('crosshair');
     this.hitMarker = byId('hit-marker');
     this.damageDirection = byId('damage-direction');
     this.announcementKicker = byId('announcement-kicker');
     this.announcementTitle = byId('announcement-title');
     this.announcementDetail = byId('announcement-detail');
-    this.resultKicker = byId('result-kicker');
     this.resultTitle = byId('result-title');
     this.resultPlayerScore = byId('result-player-score');
     this.resultBotScore = byId('result-bot-score');
@@ -77,13 +84,22 @@ export class Interface {
     this.postFlash = byId('post-flash');
     this.errorDetail = byId('error-detail');
     this.onlineMatch = false;
-    this.currentOpponent = 'QUESTMASTER';
-    this.pickupUntil = 0;
+    this.warMatch = false;
+    this.warTeam = 0;
+    this.currentOpponent = 'Computer';
     this.hitUntil = 0;
     this.damageUntil = 0;
     this.crosshairUntil = 0;
     this.setTakes(this.playerTakes, 0);
     this.setTakes(this.botTakes, 0);
+  }
+
+  setSelectedMode(mode) {
+    const war = mode === 'war';
+    this.gameMode.value = war ? 'war' : 'arena';
+    this.warClassField.classList.toggle('hidden', !war);
+    this.arenaActions.classList.toggle('hidden', war);
+    this.onlineButton.textContent = war ? 'Join War' : 'Quick Match';
   }
 
   showTitle() {
@@ -102,10 +118,10 @@ export class Interface {
     this.privateRoomControls.classList.remove('hidden');
     this.queueState.classList.add('hidden');
     this.copyRoomButton.classList.add('hidden');
-    this.lobbyKicker.textContent = 'RESERVED FIELD';
-    this.lobbyTitle.innerHTML = 'PRIVATE<br>FIELD';
+    this.lobbyKicker.textContent = 'Private Match';
+    this.lobbyTitle.textContent = 'Private Match';
     this.lobbyDetail.textContent =
-      'Reserve a field or enter a five-character rune code.';
+      'Create a match or enter a five-character match code.';
     this.roomCodeInput.value = String(prefill).toUpperCase().slice(0, 5);
     if (prefill) window.setTimeout(() => this.roomCodeInput.focus(), 0);
   }
@@ -115,40 +131,36 @@ export class Interface {
     this.networkLobby.classList.add('active');
     this.privateRoomControls.classList.add('hidden');
     this.queueState.classList.remove('hidden');
-    this.lobbyKicker.textContent = 'LIVE MATCH SERVICE';
-    this.lobbyTitle.innerHTML = title;
+    this.lobbyKicker.textContent = 'Match';
+    this.lobbyTitle.textContent = title;
     this.lobbyDetail.textContent = detail;
     this.queueCode.textContent = code;
-    this.queueMessage.textContent = code
-      ? 'Rune code secured. Waiting for the second player.'
-      : 'Searching the realm for a low-latency opponent.';
     this.copyRoomButton.classList.toggle('hidden', !copyable);
   }
 
   showLobbyError(message) {
-    this.lobbyKicker.textContent = 'MATCH SERVICE RESPONSE';
+    this.lobbyKicker.textContent = 'Match';
     this.lobbyDetail.textContent = message;
-    this.queueMessage.textContent = message;
   }
 
   setConnection(status, rtt = 0, online = null) {
     const label =
       status === 'online'
         ? online == null
-          ? 'NETWORK READY'
-          : `${online} ONLINE`
+          ? 'Online'
+          : `${online} online`
         : status === 'reconnecting'
-          ? 'RECONNECTING'
+          ? 'Reconnecting'
           : status === 'connecting'
-            ? 'CONNECTING'
-            : 'NETWORK STANDBY';
+            ? 'Connecting'
+            : 'Offline';
     this.titleNetworkState.textContent = label;
     this.lobbyConnection.textContent = label;
     this.lobbyConnectionLight.classList.toggle(
       'offline',
       status === 'offline' || status === 'reconnecting',
     );
-    const latency = rtt > 0 ? `${Math.round(rtt)} MS` : '-- MS';
+    const latency = rtt > 0 ? `${Math.round(rtt)} ms` : '-- ms';
     this.lobbyLatency.textContent = latency;
     this.networkPing.textContent = latency;
     this.networkMeter.classList.toggle('degraded', rtt >= 90 && rtt < 180);
@@ -158,14 +170,25 @@ export class Interface {
     );
   }
 
-  setOnlineMatch(active, opponent = 'QUESTMASTER') {
+  setOnlineMatch(active, opponent = 'Computer') {
     this.onlineMatch = active;
-    this.currentOpponent = opponent || 'RIVAL';
+    this.currentOpponent = opponent || 'Opponent';
     this.opponentName.textContent = this.currentOpponent;
     this.resultOpponentName.textContent = this.currentOpponent;
     this.networkMeter.classList.toggle('hidden', !active);
     this.restartButton.classList.toggle('hidden', active);
-    this.quitButton.textContent = active ? 'FORFEIT AND QUIT' : 'QUIT TO TITLE';
+    this.quitButton.textContent = active ? 'Forfeit and Quit' : 'Quit to Menu';
+  }
+
+  setWarMatch(active, team = 0) {
+    this.warMatch = Boolean(active);
+    this.warTeam = Number(team) === 1 ? 1 : 0;
+    this.arenaScore.classList.toggle('hidden', this.warMatch);
+    this.warScore.classList.toggle('hidden', !this.warMatch);
+    if (!this.warMatch) {
+      this.warCapture.classList.add('hidden');
+      this.warRespawnClassField?.classList.add('hidden');
+    }
   }
 
   showConnectionOverlay(message) {
@@ -200,29 +223,31 @@ export class Interface {
     this.hud.classList.add('hidden');
     this.announcement.classList.add('hidden');
     this.pauseScreen.classList.remove('active');
-    this.resultKicker.textContent = won ? 'QUEST COMPLETE' : 'DUEL LOST';
-    this.resultTitle.innerHTML = won ? 'REALM<br>CLAIMED' : 'REALM<br>LOST';
+    this.resultTitle.textContent = won ? 'Win' : 'Loss';
     this.resultPlayerScore.textContent = playerScore;
     this.resultBotScore.textContent = botScore;
     this.resultOpponentName.textContent = opponent;
-    this.resultDetail.textContent = won
-      ? 'You owned the lanes, controlled the relics, and claimed the realm.'
-      : `${opponent} claimed the field. Rotate sooner, control the relics, and run it back.`;
-    this.rematchButton.querySelector('span').textContent = this.onlineMatch
-      ? 'REQUEST REMATCH'
-      : 'RUN IT AGAIN';
+    this.resultDetail.textContent = '';
+    this.rematchButton.textContent = this.warMatch
+      ? 'Play Again'
+      : this.onlineMatch
+        ? 'Request Rematch'
+        : 'Play Again';
     this.resultScreen.classList.add('active');
   }
 
   showRematchWaiting() {
-    this.rematchButton.querySelector('span').textContent = 'REMATCH REQUESTED';
-    this.rematchButton.querySelector('small').textContent = 'WAITING FOR RIVAL';
+    this.rematchButton.textContent = 'Waiting for Opponent';
     this.rematchButton.disabled = true;
   }
 
   resetRematchButton() {
     this.rematchButton.disabled = false;
-    this.rematchButton.querySelector('small').textContent = 'PRESS ENTER';
+    this.rematchButton.textContent = this.warMatch
+      ? 'Play Again'
+      : this.onlineMatch
+        ? 'Request Rematch'
+        : 'Play Again';
   }
 
   showError(message) {
@@ -233,12 +258,7 @@ export class Interface {
   setTakes(container, count) {
     if (Number(container.dataset.count) === count) return;
     container.dataset.count = String(count);
-    container.replaceChildren();
-    for (let index = 0; index < 2; index += 1) {
-      const mark = document.createElement('i');
-      if (index < count) mark.classList.add('won');
-      container.appendChild(mark);
-    }
+    container.textContent = `${count}/2`;
   }
 
   updateHUD(state, player, bot, map, movement) {
@@ -250,55 +270,82 @@ export class Interface {
     }
     this.setTakes(this.playerTakes, state.playerTakes);
     this.setTakes(this.botTakes, state.botTakes);
-    const roundLabel = `ROUND ${String(state.roundNumber).padStart(2, '0')}`;
+    const roundLabel = `Round ${state.roundNumber}`;
     if (this.roundLabel.textContent !== roundLabel) this.roundLabel.textContent = roundLabel;
-    if (this.arenaLabel.textContent !== map.name) this.arenaLabel.textContent = map.name;
-    const timer = state.overtime ? 'OVERTIME' : formatTime(state.takeTime);
+    const timer = state.overtime ? 'Overtime' : formatTime(state.takeTime);
     if (this.timer.textContent !== timer) this.timer.textContent = timer;
     const health = String(Math.ceil(player.health));
     if (this.healthValue.textContent !== health) this.healthValue.textContent = health;
     const healthWidth = `${Math.round(clamp(player.health, 0, 100) * 10) / 10}%`;
     if (this.healthFill.style.width !== healthWidth) this.healthFill.style.width = healthWidth;
-    this.healthPanel.classList.toggle('danger', player.health <= 30);
-    if (this.weaponName.textContent !== player.definition.name) {
-      this.weaponName.textContent = player.definition.name;
-    }
     const usesAmmo = player.definition.usesAmmo !== false;
-    const ammo = usesAmmo ? String(player.ammo).padStart(2, '0') : '—';
+    this.healthPanel.classList.toggle('ammo-free', !usesAmmo);
+    const ammo = usesAmmo ? String(player.ammo).padStart(2, '0') : '';
     if (this.ammoValue.textContent !== ammo) this.ammoValue.textContent = ammo;
     const reserve = usesAmmo
       ? ` / ${String(player.reserve ?? 0).padStart(2, '0')}`
       : '';
     if (this.ammoReserve.textContent !== reserve) this.ammoReserve.textContent = reserve;
-    if (this.fireMode.textContent !== player.definition.fireMode) {
-      this.fireMode.textContent = player.definition.fireMode;
-    }
     this.crosshair.classList.toggle('empty', usesAmmo && player.ammo <= 0);
     this.crosshair.classList.toggle('focused', player.focused);
+  }
 
-    let movementLabel = 'READY';
-    let hot = false;
-    if (movement.wallRunning) {
-      movementLabel = 'WALL RUN';
-      hot = true;
-    } else if (movement.sliding) {
-      movementLabel = 'SLIDE';
-      hot = true;
-    } else if (movement.sprinting) {
-      movementLabel = 'SPRINT';
-    } else if (!player.grounded && player.velocity.y > 0.5) {
-      movementLabel = 'AIRBORNE';
-    } else if (player.reloading) {
-      movementLabel = 'READYING';
-      hot = true;
-    } else if (usesAmmo && player.ammo <= 0) {
-      movementLabel = player.reserve > 0 ? 'R TO READY' : 'FIND A RELIC';
-      hot = true;
-    }
-    if (this.movementState.textContent !== movementLabel) {
-      this.movementState.textContent = movementLabel;
-    }
-    this.movementState.classList.toggle('hot', hot);
+  updateWarHUD(control, player, team = this.warTeam) {
+    const scores = Array.isArray(control?.scores) ? control.scores : [0, 0];
+    this.warRedScore.textContent = `${Math.floor(Number(scores[0]) || 0)}%`;
+    this.warBlueScore.textContent = `${Math.floor(Number(scores[1]) || 0)}%`;
+
+    let label = 'Point neutral';
+    if (control?.phase === 'locked') label = 'Point locked';
+    else if (control?.overtime) label = 'Overtime';
+    else if (control?.contested) label = 'Point contested';
+    else if (control?.captureTeam === 0) label = 'Red capturing';
+    else if (control?.captureTeam === 1) label = 'Blue capturing';
+    else if (control?.owner === 0) label = 'Red controls point';
+    else if (control?.owner === 1) label = 'Blue controls point';
+    this.roundLabel.textContent = label;
+
+    const respawnRemaining = Number(player?.respawnRemaining) || 0;
+    this.timer.textContent = player?.dead
+      ? `Respawn ${Math.max(1, Math.ceil(respawnRemaining / 1000))}`
+      : control?.phase === 'locked'
+        ? formatTime((Number(control.unlockRemaining) || 0) / 1000)
+        : control?.overtime
+          ? 'OT'
+          : '';
+
+    const captureVisible = control?.captureTeam === 0 || control?.captureTeam === 1;
+    this.warCapture.classList.toggle('hidden', !captureVisible);
+    this.warCapture.setAttribute(
+      'aria-label',
+      captureVisible
+        ? `${control.captureTeam === 0 ? 'Red' : 'Blue'} capture progress`
+        : 'Capture progress',
+    );
+    this.warCaptureFill.style.width = `${clamp(Number(control?.captureProgress) || 0, 0, 100)}%`;
+
+    const maxHealth = Math.max(1, Number(player?.maxHealth) || 100);
+    const health = clamp(Number(player?.health) || 0, 0, maxHealth);
+    this.healthValue.textContent = String(Math.ceil(health));
+    this.healthFill.style.width = `${Math.round(health / maxHealth * 1_000) / 10}%`;
+    const usesAmmo = player?.usesAmmo !== false;
+    this.healthPanel.classList.toggle('ammo-free', !usesAmmo);
+    this.ammoValue.textContent = usesAmmo
+      ? String(Math.max(0, Number(player?.ammo) || 0)).padStart(2, '0')
+      : '';
+    this.ammoReserve.textContent = usesAmmo
+      ? ` / ${String(Math.max(0, Number(player?.reserve) || 0)).padStart(2, '0')}`
+      : '';
+    this.crosshair.classList.toggle('focused', Boolean(player?.focused));
+    this.crosshair.classList.toggle(
+      'empty',
+      usesAmmo && (Number(player?.ammo) || 0) <= 0,
+    );
+    this.setWarMatch(true, team);
+    this.warRespawnClassField?.classList.toggle(
+      'hidden',
+      !shouldShowWarRespawnClass(this.warMatch, player),
+    );
   }
 
   showAnnouncement(kicker, title, detail = '') {
@@ -306,19 +353,10 @@ export class Interface {
     this.announcementTitle.textContent = title;
     this.announcementDetail.textContent = detail;
     this.announcement.classList.remove('hidden');
-    const oldRule = byId('announcement-rule');
-    const newRule = oldRule.cloneNode(true);
-    oldRule.replaceWith(newRule);
   }
 
   hideAnnouncement() {
     this.announcement.classList.add('hidden');
-  }
-
-  showPickup(name, time) {
-    this.pickupName.textContent = name;
-    this.pickupToast.classList.add('active');
-    this.pickupUntil = time + 1.35;
   }
 
   showHit(headshot, time) {
@@ -344,12 +382,11 @@ export class Interface {
   }
 
   setMuted(muted) {
-    this.audioToggle.classList.toggle('muted', muted);
+    this.audioToggle.textContent = muted ? 'Sound: Off' : 'Sound: On';
     this.audioToggle.setAttribute('aria-label', muted ? 'Enable sound' : 'Mute sound');
   }
 
   update(time) {
-    if (time >= this.pickupUntil) this.pickupToast.classList.remove('active');
     if (time >= this.hitUntil) this.hitMarker.classList.remove('active');
     if (time >= this.damageUntil) this.damageDirection.classList.remove('active');
     if (time >= this.crosshairUntil) this.crosshair.classList.remove('firing');

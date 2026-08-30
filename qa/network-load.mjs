@@ -8,7 +8,7 @@ const wsUrl = new URL('/ws', baseUrl);
 wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
 
 function createClient(index) {
-  const socket = new WebSocket(wsUrl, { perMessageDeflate: false });
+  const socket = new WebSocket(wsUrl);
   const state = {
     index,
     socket,
@@ -26,7 +26,7 @@ function createClient(index) {
     socket.send(
       JSON.stringify({
         type: 'hello',
-        version: 3,
+        version: 4,
         name: `LOAD ${String(index).padStart(2, '0')}`,
       }),
     );

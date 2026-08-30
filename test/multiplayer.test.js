@@ -64,8 +64,8 @@ test('authoritative weapon values stay aligned with client presentation', () => 
   }
 });
 
-test('greatsword and bows never consume ammo and cannot reload', () => {
-  for (const weapon of ['greatsword', 'shortbow', 'longbow']) {
+test('knives, greatsword, and bows never consume ammo and cannot reload', () => {
+  for (const weapon of ['knives', 'greatsword', 'shortbow', 'longbow']) {
     const first = createSession(`FIRST-${weapon}`);
     const second = createSession(`SECOND-${weapon}`);
     const room = new Room({ sessions: [first, second], rules: fastRules, now: 2000 });
@@ -212,6 +212,7 @@ test('server validates movement and acknowledges accepted input sequences', () =
   });
   const player = room.players[0];
   const spawn = [...player.position];
+  first.measuredRtt = 42;
 
   room.handleState(
     first,
@@ -225,12 +226,13 @@ test('server validates movement and acknowledges accepted input sequences', () =
       sliding: false,
       wallRunning: false,
       focused: false,
-      rtt: 30,
+      rtt: 800,
     },
     2050,
   );
   assert.equal(player.lastSequence, 1);
   assert.equal(player.position[0], spawn[0] + 0.25);
+  assert.equal(player.rtt, 42, 'Arena rewind must use the server probe, not client RTT');
 
   room.handleState(
     first,
@@ -354,6 +356,26 @@ test('server rejects shot directions that diverge from reported aim', () => {
   assert.equal(shooter.lastShotId, 0);
 });
 
+test('malformed Arena shot directions are rejected without throwing', () => {
+  const first = createSession('FIRST');
+  const second = createSession('SECOND');
+  const room = new Room({ sessions: [first, second], rules: fastRules, now: 3_700 });
+  room.phase = 'playing';
+  const shooter = room.players[0];
+  const startingAmmo = shooter.ammo;
+
+  for (const direction of [undefined, null, 1, [], [0, 0], [0, 0, Infinity]]) {
+    assert.doesNotThrow(() => room.handleShot(first, {
+      shotId: 1,
+      yaw: 0,
+      pitch: 0,
+      direction,
+    }, 3_800));
+  }
+  assert.equal(shooter.lastShotId, 0);
+  assert.equal(shooter.ammo, startingAmmo);
+});
+
 test('the trade window preserves legitimate simultaneous eliminations', () => {
   const first = createSession('FIRST');
   const second = createSession('SECOND');
@@ -402,7 +424,7 @@ test('the trade window preserves legitimate simultaneous eliminations', () => {
 });
 
 test('server collision and ray helpers match arena boundaries', () => {
-  assert.equal(bodyIntersectsWorld(0, [-14, 0.02, 13.4], false), false);
+  assert.equal(bodyIntersectsWorld(0, [-14, 0.02, 14.5], false), false);
   assert.equal(bodyIntersectsWorld(0, [0, 0.02, 0], false), true);
   const direction = directionFromAngles(-Math.PI / 2, 0);
   assert.ok(Math.abs(direction[0] - 1) < 1e-8);
